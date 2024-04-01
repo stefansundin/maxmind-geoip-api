@@ -1,0 +1,6 @@
+/target
+*.mmdb
+Geo*
+
+Thumbs.db
+*.DS_Store
