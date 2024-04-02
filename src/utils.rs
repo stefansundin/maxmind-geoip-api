@@ -47,7 +47,7 @@ pub fn database_path() -> &'static Path {
   DATABASE_PATH.get_or_init(|| Path::new(data_dir()).join("database.mmdb"))
 }
 
-async fn save_mmdb(
+fn save_mmdb(
   source_path: &Path,
   temp_path: &Path,
   destination_path: &Path,
@@ -139,7 +139,18 @@ async fn save_mmdb(
     std::mem::swap(&mut read_path, &mut write_path);
   }
 
-  std::fs::rename(&read_path, destination_path)?;
+  // verify that the database can be opened successfully
+  match maxminddb::Reader::open_mmap(&read_path) {
+    Ok(reader) => {
+      info!("{:?}", reader.metadata);
+    }
+    Err(err) => {
+      fs::remove_file(read_path)?;
+      return Err(format!("Error opening newly downloaded database: {}", err).into());
+    }
+  }
+
+  fs::rename(&read_path, destination_path)?;
   Ok(())
 }
 
@@ -229,7 +240,15 @@ pub async fn download_database() -> Result<(), Box<dyn Error>> {
   // why does this copy require a trait from actix_web??
   std::io::copy(&mut reader, &mut temp_file)?;
   temp_file.sync_all()?;
-  save_mmdb(&temp_path, &temp_path2, &database_path).await?;
+
+  if let Err(err) = save_mmdb(&temp_path, &temp_path2, &database_path) {
+    if database_path.is_file() {
+      warn!("{}", err);
+      return Ok(());
+    } else {
+      return Err(err);
+    }
+  }
 
   fs::write(
     etag_path,
