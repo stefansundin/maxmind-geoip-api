@@ -1,4 +1,5 @@
 use actix_web::web::Buf;
+use chrono::{TimeZone, Utc};
 use log::{error, info, warn};
 use std::sync::OnceLock;
 use std::{
@@ -227,11 +228,6 @@ pub async fn download_database() -> Result<(), Box<dyn Error>> {
     .get("ETag")
     .expect("read ETag header")
     .clone();
-  let last_modified = response
-    .headers()
-    .get("Last-Modified")
-    .expect("read Last-Modified header")
-    .clone();
 
   let temp_path = Path::new(data_dir()).join("database.mmdb.temp");
   let temp_path2 = Path::new(data_dir()).join("database.mmdb.temp2");
@@ -256,11 +252,14 @@ pub async fn download_database() -> Result<(), Box<dyn Error>> {
   )?;
   fs::write(stamp_path, "")?;
 
+  let db = maxminddb::Reader::open_mmap(&database_path)?;
+  let datetime = Utc
+    .timestamp_opt(db.metadata.build_epoch.try_into()?, 0)
+    .unwrap();
   info!(
-    "Downloaded a new database (Last-Modified: {})",
-    last_modified
-      .to_str()
-      .expect("convert Last-Modified to string")
+    "Downloaded a database ({} dated {})",
+    db.metadata.database_type,
+    datetime.format("%Y-%m-%d")
   );
 
   Ok(())
