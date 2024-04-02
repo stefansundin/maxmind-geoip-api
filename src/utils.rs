@@ -223,11 +223,7 @@ pub async fn download_database() -> Result<(), Box<dyn Error>> {
     }
   }
 
-  let etag = response
-    .headers()
-    .get("ETag")
-    .expect("read ETag header")
-    .clone();
+  let etag = response.headers().get("ETag").map(|v| v.clone());
 
   let temp_path = Path::new(data_dir()).join("database.mmdb.temp");
   let temp_path2 = Path::new(data_dir()).join("database.mmdb.temp2");
@@ -246,10 +242,13 @@ pub async fn download_database() -> Result<(), Box<dyn Error>> {
     }
   }
 
-  fs::write(
-    etag_path,
-    etag.to_str().expect("error converting ETag to string"),
-  )?;
+  if let Some(etag) = etag {
+    fs::write(
+      etag_path,
+      etag.to_str().expect("error converting ETag to string"),
+    )?;
+  }
+
   fs::write(stamp_path, "")?;
 
   let db = maxminddb::Reader::open_mmap(&database_path)?;
