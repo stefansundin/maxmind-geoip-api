@@ -77,7 +77,7 @@ async fn save_mmdb(
         if path.ends_with(".mmdb") {
           std::io::copy(&mut file, &mut writer)?;
           writer.sync_all()?;
-          std::fs::remove_file(read_path)?;
+          fs::remove_file(read_path)?;
           found = true;
           break;
         }
@@ -92,7 +92,7 @@ async fn save_mmdb(
       let mut decompressor = flate2::read::GzDecoder::new(reader);
       std::io::copy(&mut decompressor, &mut writer)?;
       writer.sync_all()?;
-      std::fs::remove_file(read_path)?;
+      fs::remove_file(read_path)?;
     } else if fmt == file_format::FileFormat::Gzip {
       // .bz2
       let reader = fs::File::open(read_path)?;
@@ -100,7 +100,7 @@ async fn save_mmdb(
       let mut decompressor = bzip2::read::BzDecoder::new(reader);
       std::io::copy(&mut decompressor, &mut writer)?;
       writer.sync_all()?;
-      std::fs::remove_file(read_path)?;
+      fs::remove_file(read_path)?;
     } else if fmt == file_format::FileFormat::Zip {
       // .zip
       let reader = fs::File::open(read_path)?;
@@ -116,7 +116,7 @@ async fn save_mmdb(
         if name.ends_with(".mmdb") {
           std::io::copy(&mut file, &mut writer)?;
           writer.sync_all()?;
-          std::fs::remove_file(read_path)?;
+          fs::remove_file(read_path)?;
           found = true;
           break;
         }
@@ -131,7 +131,7 @@ async fn save_mmdb(
       let mut decompressor = xz2::read::XzDecoder::new(reader);
       std::io::copy(&mut decompressor, &mut writer)?;
       writer.sync_all()?;
-      std::fs::remove_file(read_path)?;
+      fs::remove_file(read_path)?;
     } else {
       break;
     }
@@ -146,7 +146,30 @@ async fn save_mmdb(
 pub async fn download_database() -> Result<(), Box<dyn Error>> {
   let database_path = database_path();
   let etag_path = Path::new(data_dir()).join("etag");
+  let stamp_path = Path::new(data_dir()).join("stamp");
   let url = get_env_var("MAXMIND_DB_URL");
+
+  // Skip check if we have a downloaded database already and it has been less than 24 hours since the last check
+  if database_path.is_file() && stamp_path.is_file() {
+    if let Ok(metadata) = fs::metadata(&stamp_path) {
+      let modified_date = metadata
+        .modified()
+        .expect("error getting stamp last modified date");
+      let duration_since = time::SystemTime::now()
+        .duration_since(modified_date)
+        .expect("error calculating time duration since stamp last modified date");
+      let one_day = time::Duration::from_secs(24 * 60 * 60);
+      if duration_since < one_day {
+        let formatter = timeago::Formatter::new();
+        let formatted_time = formatter.convert(duration_since);
+        info!(
+          "Last checked for a database update {}, skipping check.",
+          formatted_time
+        );
+        return Ok(());
+      }
+    }
+  }
 
   let mut request = reqwest::Client::new().get(url);
   if database_path.is_file() && etag_path.is_file() {
@@ -168,13 +191,13 @@ pub async fn download_database() -> Result<(), Box<dyn Error>> {
           let modified_date = metadata
             .modified()
             .expect("error getting database last modified date");
-          let duration = time::SystemTime::now()
+          let duration_since = time::SystemTime::now()
             .duration_since(modified_date)
             .expect("error calculating time duration since database last modified date");
           let formatter = timeago::Formatter::new();
-          let formatted_time = formatter.convert(duration);
+          let formatted_time = formatter.convert(duration_since);
           info!(
-            "There is a database saved from {} so ignoring the error",
+            "There is a database saved from {} so ignoring the error.",
             formatted_time
           );
           return Ok(());
@@ -208,10 +231,11 @@ pub async fn download_database() -> Result<(), Box<dyn Error>> {
   temp_file.sync_all()?;
   save_mmdb(&temp_path, &temp_path2, &database_path).await?;
 
-  std::fs::write(
+  fs::write(
     etag_path,
     etag.to_str().expect("error converting ETag to string"),
   )?;
+  fs::write(stamp_path, "")?;
 
   info!(
     "Downloaded a new database (Last-Modified: {})",
