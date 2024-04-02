@@ -1,6 +1,5 @@
 use actix_web::web::Buf;
 use log::{error, info, warn};
-use std::io::Read;
 use std::sync::OnceLock;
 use std::{
   env,
@@ -46,6 +45,102 @@ pub fn data_dir() -> &'static str {
 pub fn database_path() -> &'static Path {
   static DATABASE_PATH: OnceLock<PathBuf> = OnceLock::new();
   DATABASE_PATH.get_or_init(|| Path::new(data_dir()).join("database.mmdb"))
+}
+
+async fn save_mmdb(
+  source_path: &Path,
+  temp_path: &Path,
+  destination_path: &Path,
+) -> Result<(), Box<dyn Error>> {
+  // This function pulls out the mmdb file from a bunch of possible compression formats, even combinations that are unlikely
+  // So it needs two temporary files to do this without putting everything in memory
+  // At the end the mmdb file is moved to the destination path, in an atomic operation
+  let mut read_path = source_path;
+  let mut write_path = temp_path;
+
+  loop {
+    let fmt = file_format::FileFormat::from_file(read_path)?;
+
+    if fmt == file_format::FileFormat::TapeArchive {
+      // .tar
+      let reader = fs::File::open(read_path)?;
+      let mut writer = fs::File::create(write_path)?;
+      let mut archive = tar::Archive::new(reader);
+      let mut found = false;
+      for file in archive.entries()? {
+        let mut file = file?;
+        let path = file.path()?;
+        let path = path.to_str().unwrap_or(&"");
+        if path.starts_with("__MACOSX/") {
+          continue;
+        }
+        if path.ends_with(".mmdb") {
+          std::io::copy(&mut file, &mut writer)?;
+          writer.sync_all()?;
+          std::fs::remove_file(read_path)?;
+          found = true;
+          break;
+        }
+      }
+      if !found {
+        return Err("mmdb file not found in archive".into());
+      }
+    } else if fmt == file_format::FileFormat::Gzip {
+      // .gz
+      let reader = fs::File::open(read_path)?;
+      let mut writer = fs::File::create(write_path)?;
+      let mut decompressor = flate2::read::GzDecoder::new(reader);
+      std::io::copy(&mut decompressor, &mut writer)?;
+      writer.sync_all()?;
+      std::fs::remove_file(read_path)?;
+    } else if fmt == file_format::FileFormat::Gzip {
+      // .bz2
+      let reader = fs::File::open(read_path)?;
+      let mut writer = fs::File::create(write_path)?;
+      let mut decompressor = bzip2::read::BzDecoder::new(reader);
+      std::io::copy(&mut decompressor, &mut writer)?;
+      writer.sync_all()?;
+      std::fs::remove_file(read_path)?;
+    } else if fmt == file_format::FileFormat::Zip {
+      // .zip
+      let reader = fs::File::open(read_path)?;
+      let mut writer = fs::File::create(write_path)?;
+      let mut archive = ZipArchive::new(reader)?;
+      let mut found = false;
+      for i in 0..archive.len() {
+        let mut file = archive.by_index(i)?;
+        let name = file.name();
+        if name.starts_with("__MACOSX/") {
+          continue;
+        }
+        if name.ends_with(".mmdb") {
+          std::io::copy(&mut file, &mut writer)?;
+          writer.sync_all()?;
+          std::fs::remove_file(read_path)?;
+          found = true;
+          break;
+        }
+      }
+      if !found {
+        return Err("mmdb file not found in archive".into());
+      }
+    } else if fmt == file_format::FileFormat::Xz {
+      // .xz
+      let reader = fs::File::open(read_path)?;
+      let mut writer = fs::File::create(write_path)?;
+      let mut decompressor = xz2::read::XzDecoder::new(reader);
+      std::io::copy(&mut decompressor, &mut writer)?;
+      writer.sync_all()?;
+      std::fs::remove_file(read_path)?;
+    } else {
+      break;
+    }
+
+    std::mem::swap(&mut read_path, &mut write_path);
+  }
+
+  std::fs::rename(&read_path, destination_path)?;
+  Ok(())
 }
 
 pub async fn download_database() -> Result<(), Box<dyn Error>> {
@@ -98,58 +193,21 @@ pub async fn download_database() -> Result<(), Box<dyn Error>> {
     .get("ETag")
     .expect("read ETag header")
     .clone();
-  let content_type = response
-    .headers()
-    .get("Content-Type")
-    .expect("read Content-Type header")
-    .clone();
   let last_modified = response
     .headers()
     .get("Last-Modified")
     .expect("read Last-Modified header")
     .clone();
 
-  // Download the new database to a temporary file and then rename it to perform an atomic replacement of the old database
   let temp_path = Path::new(data_dir()).join("database.mmdb.temp");
-  let mut output_file = fs::File::create(&temp_path)?;
-  // why does this copy require a trait from actix_web??
+  let temp_path2 = Path::new(data_dir()).join("database.mmdb.temp2");
+  let mut temp_file = fs::File::create(&temp_path)?;
   let mut reader = response.bytes().await?.reader();
-  if content_type == "application/gzip" {
-    // This does not handle .tar.gz files
-    let mut decompressor = flate2::read::GzDecoder::new(reader);
-    std::io::copy(&mut decompressor, &mut output_file)?;
-  } else if content_type == "application/x-bzip2" {
-    // This does not handle .tar.bz2 files
-    let mut decompressor = bzip2::read::BzDecoder::new(reader);
-    std::io::copy(&mut decompressor, &mut output_file)?;
-  } else if content_type == "application/x-xz" {
-    let mut decompressor = xz2::read::XzDecoder::new(reader);
-    std::io::copy(&mut decompressor, &mut output_file)?;
-  } else if content_type == "application/zip" {
-    let mut all_bytes = Vec::new();
-    reader.read_to_end(&mut all_bytes)?;
-    let seekable_reader = std::io::Cursor::new(all_bytes);
-    let mut archive = ZipArchive::new(seekable_reader)?;
-    let mut found = false;
-    for i in 0..archive.len() {
-      let mut file = archive.by_index(i)?;
-      let name = file.name();
-      if name.starts_with("__MACOSX/") {
-        continue;
-      }
-      if name.to_lowercase().ends_with(".mmdb") {
-        std::io::copy(&mut file, &mut output_file)?;
-        found = true;
-        break;
-      }
-    }
-    if !found {
-      return Err("no .mmdb file found in archive".into());
-    }
-  } else {
-    std::io::copy(&mut reader, &mut output_file)?;
-  }
-  std::fs::rename(&temp_path, database_path)?;
+  // why does this copy require a trait from actix_web??
+  std::io::copy(&mut reader, &mut temp_file)?;
+  temp_file.sync_all()?;
+  save_mmdb(&temp_path, &temp_path2, &database_path).await?;
+
   std::fs::write(
     etag_path,
     etag.to_str().expect("error converting ETag to string"),

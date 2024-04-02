@@ -8,12 +8,14 @@ actix-web = "4.5.1"
 bzip2 = "0.4.4"
 chrono = "0.4.37"
 env_logger = "0.11.3"
+file-format = "0.24.0"
 flate2 = "1.0.28"
 log = "0.4.21"
 maxminddb = { version = "0.24.0", features = ["mmap"] }
 reqwest = { version = "0.12.2", features = ["stream"] }
 serde = { version = "1.0.197", features = ["derive"] }
 serde_json = "1.0.115"
+tar = "0.4.40"
 timeago = "0.4.2"
 tokio = { version = "1.37.0", features = ["full", "macros"] }
 xz2 = "0.1.7"
