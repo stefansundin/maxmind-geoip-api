@@ -7,21 +7,27 @@ use std::{env, net::IpAddr, process};
 pub mod utils;
 
 #[get("/{ip}")]
-async fn lookup(addr: web::Path<IpAddr>) -> HttpResponse {
+async fn lookup(addr: web::Path<IpAddr>) -> Result<HttpResponse, actix_web::error::Error> {
   let addr = addr.into_inner();
   debug!("addr: {}", addr);
 
-  let reader = Reader::open_mmap(utils::database_path()).expect("error getting reader");
+  let reader = Reader::open_mmap(utils::database_path()).map_err(|err| {
+    error!("Error opening database: {}", err);
+    actix_web::error::ErrorInternalServerError(err.to_string())
+  })?;
+
   let result: Result<geoip2::City, _> = reader.lookup(addr);
   let city = match result {
     Ok(city) => city,
-    Err(_) => return HttpResponse::NotFound().finish(),
+    Err(_) => return Ok(HttpResponse::NotFound().finish()),
   };
   debug!("city: {:?}", city);
 
-  return HttpResponse::Ok()
-    .append_header(("content-type", "application/json"))
-    .body(json!(city).to_string());
+  return Ok(
+    HttpResponse::Ok()
+      .append_header(("content-type", "application/json"))
+      .body(json!(city).to_string()),
+  );
 }
 
 #[tokio::main]
