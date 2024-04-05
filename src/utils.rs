@@ -189,7 +189,7 @@ pub async fn download_database() -> Result<(), Box<dyn Error>> {
       request = request.header("If-None-Match", etag);
     }
   }
-  let response = request.send().await.expect("error fetching database file");
+  let response = request.send().await?;
 
   let status_code = response.status();
   if status_code == reqwest::StatusCode::NOT_MODIFIED {
