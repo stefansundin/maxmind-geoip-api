@@ -155,6 +155,22 @@ fn save_mmdb(
   Ok(())
 }
 
+fn build_reqwest_client() -> Result<reqwest::Client, reqwest::Error> {
+  let mut builder = reqwest::Client::builder();
+
+  if let Ok(v) = env::var("CA_BUNDLE") {
+    let cert_data = std::fs::read(v).expect("error reading CA_BUNDLE file");
+    let cert = reqwest::Certificate::from_pem(&cert_data)?;
+    builder = builder.add_root_certificate(cert);
+  }
+
+  if let Ok(v) = env::var("DANGER_ACCEPT_INVALID_CERTS") {
+    builder = builder.danger_accept_invalid_certs(v == "true" || v == "1");
+  }
+
+  return builder.build();
+}
+
 pub async fn download_database() -> Result<(), Box<dyn Error>> {
   let database_path = database_path();
   let etag_path = Path::new(data_dir()).join("etag");
@@ -183,7 +199,7 @@ pub async fn download_database() -> Result<(), Box<dyn Error>> {
     }
   }
 
-  let mut request = reqwest::Client::new().get(url);
+  let mut request = build_reqwest_client()?.get(&url);
   if database_path.is_file() && etag_path.is_file() {
     if let Ok(etag) = fs::read_to_string(&etag_path) {
       request = request.header("If-None-Match", etag);
