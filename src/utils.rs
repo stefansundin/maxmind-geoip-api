@@ -171,14 +171,14 @@ fn build_reqwest_client() -> Result<reqwest::Client, reqwest::Error> {
   return builder.build();
 }
 
-pub async fn download_database() -> Result<(), Box<dyn Error>> {
+pub async fn download_database(force: bool) -> Result<(), Box<dyn Error>> {
   let database_path = database_path();
   let etag_path = Path::new(data_dir()).join("etag");
   let stamp_path = Path::new(data_dir()).join("stamp");
   let url = get_env_var("MAXMIND_DB_URL");
 
   // Skip check if we have a downloaded database already and it has been less than 24 hours since the last check
-  if database_path.is_file() && stamp_path.is_file() {
+  if !force && database_path.is_file() && stamp_path.is_file() {
     if let Ok(metadata) = fs::metadata(&stamp_path) {
       let modified_date = metadata
         .modified()

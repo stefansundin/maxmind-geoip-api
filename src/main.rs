@@ -4,6 +4,7 @@ use maxminddb::{geoip2, Metadata, Reader};
 use serde::Serialize;
 use serde_json::json;
 use std::{collections::BTreeMap, env, net::IpAddr, process};
+use tokio::signal::unix::{signal, SignalKind};
 
 pub mod utils;
 
@@ -67,7 +68,18 @@ async fn lookup(addr: web::Path<IpAddr>) -> Result<HttpResponse, actix_web::erro
 async fn main() -> std::io::Result<()> {
   env_logger::init_from_env(env_logger::Env::default().default_filter_or("info"));
 
-  if let Err(err) = utils::download_database().await {
+  // Send the process a SIGHUP to download a new database
+  tokio::spawn(async {
+    let mut sighup = signal(SignalKind::hangup()).expect("error listening for SIGHUP");
+    while let Some(_) = sighup.recv().await {
+      match utils::download_database(true).await {
+        Ok(_) => {}
+        Err(err) => error!("Error downloading new database: {:?}", err),
+      }
+    }
+  });
+
+  if let Err(err) = utils::download_database(false).await {
     error!("Error downloading database: {:?}", err);
     process::exit(1);
   }
