@@ -175,7 +175,20 @@ pub async fn download_database(force: bool) -> Result<(), Box<dyn Error>> {
   let database_path = database_path();
   let etag_path = Path::new(data_dir()).join("etag");
   let stamp_path = Path::new(data_dir()).join("stamp");
-  let url = get_env_var("MAXMIND_DB_URL");
+  let url = env::var("MAXMIND_DB_URL");
+
+  if url.is_err() {
+    if database_path.is_file() {
+      return Ok(());
+    } else {
+      error!(
+        "Please configure MAXMIND_DB_URL or place a database file at {}",
+        database_path.display()
+      );
+      process::exit(1);
+    }
+  }
+  let url = url.unwrap();
 
   // Skip check if we have a downloaded database already and it has been less than 24 hours since the last check
   if !force && database_path.is_file() && stamp_path.is_file() {
