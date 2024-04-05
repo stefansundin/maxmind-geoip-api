@@ -1,13 +1,13 @@
 use actix_web::{get, middleware, web, App, HttpResponse, HttpServer};
 use log::{debug, error};
 use maxminddb::{geoip2, Metadata, Reader};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::json;
 use std::{collections::BTreeMap, env, net::IpAddr, process};
 
 pub mod utils;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize)]
 #[serde(remote = "Metadata")]
 struct MetadataDef {
   binary_format_major_version: u16,
@@ -21,7 +21,7 @@ struct MetadataDef {
   record_size: u16,
 }
 
-#[derive(serde::Serialize)]
+#[derive(Serialize)]
 struct MetadataWrapper<'a>(#[serde(with = "MetadataDef")] &'a Metadata);
 
 #[get("/metadata")]
@@ -32,13 +32,10 @@ async fn metadata() -> Result<HttpResponse, actix_web::error::Error> {
   })?;
   debug!("{:?}", reader.metadata);
 
-  let body =
-    serde_json::to_string(&MetadataWrapper(&reader.metadata)).expect("error serializing metadata");
-
   return Ok(
     HttpResponse::Ok()
       .append_header(("content-type", "application/json"))
-      .body(body),
+      .body(json!(&MetadataWrapper(&reader.metadata)).to_string()),
   );
 }
 

@@ -1,6 +1,6 @@
 use actix_web::web::Buf;
 use chrono::{TimeZone, Utc};
-use log::{error, info, warn};
+use log::{debug, error, info, warn};
 use std::sync::OnceLock;
 use std::{
   env,
@@ -143,7 +143,7 @@ fn save_mmdb(
   // verify that the database can be opened successfully
   match maxminddb::Reader::open_mmap(&read_path) {
     Ok(reader) => {
-      info!("{:?}", reader.metadata);
+      debug!("{:?}", reader.metadata);
     }
     Err(err) => {
       fs::remove_file(read_path)?;
