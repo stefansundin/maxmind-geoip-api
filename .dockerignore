@@ -1,0 +1,15 @@
+/target
+/data
+/examples
+/tests
+.git
+.gitignore
+.rustfmt.toml
+.dockerignore
+Dockerfile*
+*.md
+*.mmdb
+Geo*
+
+Thumbs.db
+*.DS_Store
