@@ -210,6 +210,7 @@ pub async fn download_database() -> Result<(), Box<dyn Error>> {
   let status_code = response.status();
   if status_code == reqwest::StatusCode::NOT_MODIFIED {
     info!("The database file is up to date.");
+    fs::write(stamp_path, "")?;
     return Ok(());
   } else if status_code != reqwest::StatusCode::OK {
     if database_path.is_file() {
