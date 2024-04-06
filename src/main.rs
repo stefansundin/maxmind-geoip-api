@@ -1,4 +1,6 @@
 use actix_web::{get, middleware, web, App, HttpResponse, HttpServer};
+use chrono::{TimeZone, Utc};
+use log::info;
 use log::{debug, error};
 use maxminddb::{geoip2, Metadata, Mmap, Reader};
 use serde::Serialize;
@@ -11,16 +13,33 @@ use tokio::time::{interval, Duration};
 
 pub mod utils;
 
+fn load_database() -> Reader<Mmap> {
+  let reader = Reader::open_mmap(utils::database_path()).expect("error opening database");
+  let datetime = Utc
+    .timestamp_opt(
+      reader
+        .metadata
+        .build_epoch
+        .try_into()
+        .expect("parsing build_epoch"),
+      0,
+    )
+    .unwrap();
+  info!(
+    "Loaded a {} database dated {}",
+    reader.metadata.database_type,
+    datetime.format("%Y-%m-%d")
+  );
+  return reader;
+}
+
 fn reader_lock() -> &'static RwLock<Reader<Mmap>> {
   static READER_LOCK: OnceLock<RwLock<Reader<Mmap>>> = OnceLock::new();
-  READER_LOCK.get_or_init(|| {
-    let reader = Reader::open_mmap(utils::database_path()).expect("error opening database");
-    RwLock::new(reader)
-  })
+  READER_LOCK.get_or_init(|| RwLock::new(load_database()))
 }
 
 fn reload_database() {
-  let new_reader = Reader::open_mmap(utils::database_path()).unwrap();
+  let new_reader = load_database();
   let mut reader = reader_lock()
     .write()
     .expect("error getting write-access to reader");
@@ -97,10 +116,14 @@ async fn main() -> std::io::Result<()> {
     process::exit(1);
   }
 
+  // Load the database
+  reader_lock();
+
   // Check for database updates every 24 hours
   if env::var("MAXMIND_DB_URL").is_ok() {
     tokio::spawn(async {
       let mut interval = interval(Duration::from_secs(24 * 60 * 60));
+      interval.tick().await;
       loop {
         interval.tick().await;
         match utils::download_database(true).await {

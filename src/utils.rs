@@ -1,5 +1,4 @@
 use actix_web::web::Buf;
-use chrono::{TimeZone, Utc};
 use log::{debug, error, info, warn};
 use std::sync::OnceLock;
 use std::{
@@ -281,15 +280,7 @@ pub async fn download_database(force: bool) -> Result<(), Box<dyn Error>> {
 
   fs::write(stamp_path, "")?;
 
-  let db = maxminddb::Reader::open_mmap(&database_path)?;
-  let datetime = Utc
-    .timestamp_opt(db.metadata.build_epoch.try_into()?, 0)
-    .unwrap();
-  info!(
-    "Downloaded a database ({} dated {})",
-    db.metadata.database_type,
-    datetime.format("%Y-%m-%d")
-  );
+  info!("Downloaded a database");
 
   Ok(())
 }
