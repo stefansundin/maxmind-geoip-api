@@ -61,6 +61,7 @@ async fn lookup(addr: web::Path<IpAddr>) -> Result<HttpResponse, actix_web::erro
   return Ok(
     HttpResponse::Ok()
       .append_header(("content-type", "application/json"))
+      .append_header(("x-maxmind-build-epoch", reader.metadata.build_epoch))
       .body(json!(city).to_string()),
   );
 }
