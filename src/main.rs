@@ -1,3 +1,5 @@
+use actix_cors::Cors;
+use actix_web::middleware::Condition;
 use actix_web::{get, middleware, web, App, HttpResponse, HttpServer};
 use chrono::{TimeZone, Utc};
 use log::info;
@@ -146,16 +148,33 @@ async fn main() -> std::io::Result<()> {
     .unwrap();
 
   HttpServer::new(move || {
+    let cors_allowed_origins = env::var("CORS_ALLOWED_ORIGINS");
+    let mut cors = Cors::default();
+    if let Ok(ref v) = cors_allowed_origins {
+      cors = cors
+        .allowed_methods(vec!["GET"])
+        .expose_headers(vec!["server", "x-maxmind-build-epoch"])
+        .max_age(3600);
+      if v == "*" {
+        cors = cors.allow_any_origin();
+      } else {
+        for origin in v.split(",") {
+          cors = cors.allowed_origin(origin);
+        }
+      }
+    }
+
     App::new()
       .service(metadata)
       .service(lookup)
+      .wrap(Condition::new(cors_allowed_origins.is_ok(), cors))
       .wrap(
         middleware::DefaultHeaders::new().add(("server", format!("maxmind-geoip-api/{}", version))),
       )
       .wrap(middleware::Logger::new(
         env::var("ACCESS_LOG_FORMAT")
           .unwrap_or(String::from(
-            r#"%{r}a "%r" %s %b "%{Referer}i" "%{User-Agent}i" %T"#,
+            r#"%{r}a "%r" %s %b "%{Origin}i" "%{User-Agent}i" %T"#,
           ))
           .as_str(),
       ))
