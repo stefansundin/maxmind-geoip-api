@@ -5,6 +5,7 @@ use serde::Serialize;
 use serde_json::json;
 use std::{collections::BTreeMap, env, net::IpAddr, process};
 use tokio::signal::unix::{signal, SignalKind};
+use tokio::time::{interval, Duration};
 
 pub mod utils;
 
@@ -82,6 +83,20 @@ async fn main() -> std::io::Result<()> {
   if let Err(err) = utils::download_database(false).await {
     error!("Error downloading database: {:?}", err);
     process::exit(1);
+  }
+
+  // Check for database updates every 24 hours
+  if env::var("MAXMIND_DB_URL").is_ok() {
+    tokio::spawn(async {
+      let mut interval = interval(Duration::from_secs(24 * 60 * 60));
+      loop {
+        interval.tick().await;
+        match utils::download_database(true).await {
+          Ok(_) => {}
+          Err(err) => error!("Error downloading new database: {:?}", err),
+        }
+      }
+    });
   }
 
   let host = env::var("HOST").unwrap_or("0.0.0.0".to_string());
