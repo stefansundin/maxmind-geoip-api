@@ -1,13 +1,31 @@
 use actix_web::{get, middleware, web, App, HttpResponse, HttpServer};
 use log::{debug, error};
-use maxminddb::{geoip2, Metadata, Reader};
+use maxminddb::{geoip2, Metadata, Mmap, Reader};
 use serde::Serialize;
 use serde_json::json;
+use std::sync::OnceLock;
+use std::sync::RwLock;
 use std::{collections::BTreeMap, env, net::IpAddr, process};
 use tokio::signal::unix::{signal, SignalKind};
 use tokio::time::{interval, Duration};
 
 pub mod utils;
+
+fn reader_lock() -> &'static RwLock<Reader<Mmap>> {
+  static READER_LOCK: OnceLock<RwLock<Reader<Mmap>>> = OnceLock::new();
+  READER_LOCK.get_or_init(|| {
+    let reader = Reader::open_mmap(utils::database_path()).expect("error opening database");
+    RwLock::new(reader)
+  })
+}
+
+fn reload_database() {
+  let new_reader = Reader::open_mmap(utils::database_path()).unwrap();
+  let mut reader = reader_lock()
+    .write()
+    .expect("error getting write-access to reader");
+  *reader = new_reader;
+}
 
 #[derive(Serialize)]
 #[serde(remote = "Metadata")]
@@ -28,10 +46,7 @@ struct MetadataWrapper<'a>(#[serde(with = "MetadataDef")] &'a Metadata);
 
 #[get("/metadata")]
 async fn metadata() -> Result<HttpResponse, actix_web::error::Error> {
-  let reader = Reader::open_mmap(utils::database_path()).map_err(|err| {
-    error!("Error opening database: {}", err);
-    actix_web::error::ErrorInternalServerError(err.to_string())
-  })?;
+  let reader = reader_lock().read().expect("error getting reader");
   debug!("{:?}", reader.metadata);
 
   return Ok(
@@ -46,11 +61,7 @@ async fn lookup(addr: web::Path<IpAddr>) -> Result<HttpResponse, actix_web::erro
   let addr = addr.into_inner();
   debug!("addr: {}", addr);
 
-  let reader = Reader::open_mmap(utils::database_path()).map_err(|err| {
-    error!("Error opening database: {}", err);
-    actix_web::error::ErrorInternalServerError(err.to_string())
-  })?;
-
+  let reader = reader_lock().read().expect("error getting reader");
   let result: Result<geoip2::City, _> = reader.lookup(addr);
   let city = match result {
     Ok(city) => city,
@@ -75,7 +86,7 @@ async fn main() -> std::io::Result<()> {
     let mut sighup = signal(SignalKind::hangup()).expect("error listening for SIGHUP");
     while let Some(_) = sighup.recv().await {
       match utils::download_database(true).await {
-        Ok(_) => {}
+        Ok(_) => reload_database(),
         Err(err) => error!("Error downloading new database: {:?}", err),
       }
     }
@@ -93,7 +104,7 @@ async fn main() -> std::io::Result<()> {
       loop {
         interval.tick().await;
         match utils::download_database(true).await {
-          Ok(_) => {}
+          Ok(_) => reload_database(),
           Err(err) => error!("Error downloading new database: {:?}", err),
         }
       }
