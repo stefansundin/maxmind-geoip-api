@@ -102,7 +102,7 @@ async fn main() -> std::io::Result<()> {
           .as_str(),
       ))
   })
-  .bind((host.as_str(), port))?
+  .bind((host, port))?
   .run()
   .await
 }

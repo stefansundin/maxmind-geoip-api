@@ -173,10 +173,7 @@ fn build_reqwest_client() -> Result<reqwest::Client, reqwest::Error> {
 
 pub async fn download_database(force: bool) -> Result<(), Box<dyn Error>> {
   let database_path = database_path();
-  let etag_path = Path::new(data_dir()).join("etag");
-  let stamp_path = Path::new(data_dir()).join("stamp");
   let url = env::var("MAXMIND_DB_URL");
-
   if url.is_err() {
     if database_path.is_file() {
       return Ok(());
@@ -188,7 +185,9 @@ pub async fn download_database(force: bool) -> Result<(), Box<dyn Error>> {
       process::exit(1);
     }
   }
+
   let url = url.unwrap();
+  let stamp_path = Path::new(data_dir()).join("stamp");
 
   // Skip check if we have a downloaded database already and it has been less than 24 hours since the last check
   if !force && database_path.is_file() && stamp_path.is_file() {
@@ -213,6 +212,7 @@ pub async fn download_database(force: bool) -> Result<(), Box<dyn Error>> {
   }
 
   let mut request = build_reqwest_client()?.get(&url);
+  let etag_path = Path::new(data_dir()).join("etag");
   if database_path.is_file() && etag_path.is_file() {
     if let Ok(etag) = fs::read_to_string(&etag_path) {
       request = request.header("If-None-Match", etag);
