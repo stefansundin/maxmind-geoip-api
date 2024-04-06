@@ -13,6 +13,8 @@ use tokio::time::{interval, Duration};
 
 pub mod utils;
 
+const VERSION: Option<&str> = option_env!("CARGO_PKG_VERSION");
+
 fn load_database() -> Reader<Mmap> {
   let reader = Reader::open_mmap(utils::database_path()).expect("error opening database");
   let datetime = Utc
@@ -99,6 +101,9 @@ async fn lookup(addr: web::Path<IpAddr>) -> Result<HttpResponse, actix_web::erro
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
   env_logger::init_from_env(env_logger::Env::default().default_filter_or("info"));
+
+  let version = VERSION.unwrap_or("unknown");
+  info!("version {}", version);
 
   // Send the process a SIGHUP to download a new database
   tokio::spawn(async {
