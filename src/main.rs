@@ -145,10 +145,13 @@ async fn main() -> std::io::Result<()> {
     .parse::<u16>()
     .unwrap();
 
-  HttpServer::new(|| {
+  HttpServer::new(move || {
     App::new()
       .service(metadata)
       .service(lookup)
+      .wrap(
+        middleware::DefaultHeaders::new().add(("server", format!("maxmind-geoip-api/{}", version))),
+      )
       .wrap(middleware::Logger::new(
         env::var("ACCESS_LOG_FORMAT")
           .unwrap_or(String::from(
