@@ -1,0 +1,12 @@
+version: '3'
+
+services:
+  geoip:
+    image: stefansundin/maxmind-geoip-api
+    ports:
+      - 3000:80
+    volumes:
+      # Mount the whole data directory (allows for replacing the database file):
+      - ../../data:/data:ro
+      # Or mount just the database file:
+      # - ../../data/database.mmdb:/data/database.mmdb:ro

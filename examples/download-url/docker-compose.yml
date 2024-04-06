@@ -1,0 +1,15 @@
+version: '3'
+
+services:
+  geoip:
+    image: stefansundin/maxmind-geoip-api
+    ports:
+      - 3000:80
+    environment:
+      MAXMIND_DB_URL: https://github.com/maxmind/MaxMind-DB/raw/a8ae5b4ac0aa730e2783f708cdaa208aca20e9ec/test-data/GeoIP2-Enterprise-Test.mmdb
+    volumes:
+      - geoipdata:/data
+
+volumes:
+  geoipdata:
+    driver: local
