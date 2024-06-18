@@ -1,14 +1,16 @@
+#![allow(clippy::needless_return)]
+
 use actix_web::web::Buf;
 use log::{debug, error, info, warn};
-use std::sync::OnceLock;
 use std::{
   env,
   error::Error,
   fs,
   path::{Path, PathBuf},
-  process, time,
+  process,
+  sync::OnceLock,
+  time,
 };
-use zip::ZipArchive;
 
 pub fn get_env_var(name: &str) -> String {
   match env::var(name) {
@@ -28,17 +30,17 @@ pub fn data_dir() -> &'static str {
     match fs::metadata(&data_dir) {
       Ok(metadata) => {
         if !metadata.is_dir() {
-          eprintln!("Error: {} is not a directory", &data_dir);
+          error!("Error: {} is not a directory", &data_dir);
           process::exit(1);
         }
       }
       Err(err) => {
-        eprintln!("Error: {}: {}", &data_dir, err);
+        error!("Error: {}: {}", &data_dir, err);
         process::exit(1);
       }
     }
 
-    return data_dir;
+    data_dir
   })
 }
 
@@ -70,7 +72,7 @@ fn save_mmdb(
       for file in archive.entries()? {
         let mut file = file?;
         let path = file.path()?;
-        let path = path.to_str().unwrap_or(&"");
+        let path = path.to_str().unwrap_or("");
         if path.starts_with("__MACOSX/") {
           continue;
         }
@@ -105,7 +107,7 @@ fn save_mmdb(
       // .zip
       let reader = fs::File::open(read_path)?;
       let mut writer = fs::File::create(write_path)?;
-      let mut archive = ZipArchive::new(reader)?;
+      let mut archive = zip::ZipArchive::new(reader)?;
       let mut found = false;
       for i in 0..archive.len() {
         let mut file = archive.by_index(i)?;
@@ -148,7 +150,7 @@ fn save_mmdb(
   }
 
   // verify that the database can be opened successfully
-  match maxminddb::Reader::open_mmap(&read_path) {
+  match maxminddb::Reader::open_mmap(read_path) {
     Ok(reader) => {
       debug!("{:?}", reader.metadata);
     }
@@ -158,7 +160,7 @@ fn save_mmdb(
     }
   }
 
-  fs::rename(&read_path, destination_path)?;
+  fs::rename(read_path, destination_path)?;
   Ok(())
 }
 
@@ -210,7 +212,7 @@ pub async fn download_database(force: bool) -> Result<(), Box<dyn Error>> {
         let formatter = timeago::Formatter::new();
         let formatted_time = formatter.convert(duration_since);
         info!(
-          "Last checked for a database update {}, skipping check.",
+          "Last checked for a database update {}, skipping check",
           formatted_time
         );
         return Ok(());
@@ -229,13 +231,13 @@ pub async fn download_database(force: bool) -> Result<(), Box<dyn Error>> {
 
   let status_code = response.status();
   if status_code == reqwest::StatusCode::NOT_MODIFIED {
-    info!("The database file is up to date.");
+    info!("The database file is up to date");
     fs::write(stamp_path, "")?;
     return Ok(());
   } else if status_code != reqwest::StatusCode::OK {
     if database_path.is_file() {
       warn!("Got unexpected response code: {}", status_code);
-      match fs::metadata(&database_path) {
+      match fs::metadata(database_path) {
         Ok(metadata) => {
           let modified_date = metadata
             .modified()
@@ -246,7 +248,7 @@ pub async fn download_database(force: bool) -> Result<(), Box<dyn Error>> {
           let formatter = timeago::Formatter::new();
           let formatted_time = formatter.convert(duration_since);
           info!(
-            "There is a database saved from {} so ignoring the error.",
+            "There is a database saved from {} so ignoring the error",
             formatted_time
           );
           return Ok(());
@@ -260,7 +262,10 @@ pub async fn download_database(force: bool) -> Result<(), Box<dyn Error>> {
     }
   }
 
-  let etag = response.headers().get("ETag").map(|v| v.clone());
+  let etag = response
+    .headers()
+    .get("ETag")
+    .and_then(|v| v.to_str().ok().map(|v| v.to_string()));
 
   let temp_path = Path::new(data_dir()).join("database.mmdb.temp");
   let temp_path2 = Path::new(data_dir()).join("database.mmdb.temp2");
@@ -270,7 +275,7 @@ pub async fn download_database(force: bool) -> Result<(), Box<dyn Error>> {
   std::io::copy(&mut reader, &mut temp_file)?;
   temp_file.sync_all()?;
 
-  if let Err(err) = save_mmdb(&temp_path, &temp_path2, &database_path) {
+  if let Err(err) = save_mmdb(&temp_path, &temp_path2, database_path) {
     if database_path.is_file() {
       warn!("{}", err);
       return Ok(());
@@ -280,10 +285,7 @@ pub async fn download_database(force: bool) -> Result<(), Box<dyn Error>> {
   }
 
   if let Some(etag) = etag {
-    fs::write(
-      etag_path,
-      etag.to_str().expect("error converting ETag to string"),
-    )?;
+    fs::write(etag_path, etag)?;
   }
 
   fs::write(stamp_path, "")?;

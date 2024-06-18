@@ -1,14 +1,17 @@
+#![allow(clippy::needless_return)]
+
 use actix_cors::Cors;
-use actix_web::middleware::Condition;
 use actix_web::{get, middleware, web, App, HttpResponse, HttpServer};
 use chrono::{TimeZone, Utc};
-use log::info;
-use log::{debug, error};
+use log::{debug, error, info};
 use maxminddb::{geoip2, Mmap, Reader};
 use serde_json::json;
-use std::sync::OnceLock;
-use std::sync::RwLock;
-use std::{env, net::IpAddr, process};
+use std::{
+  env,
+  net::IpAddr,
+  process,
+  sync::{OnceLock, RwLock},
+};
 use tokio::signal::unix::{signal, SignalKind};
 use tokio::time::{interval, Duration};
 
@@ -92,7 +95,7 @@ async fn main() -> std::io::Result<()> {
   // Send the process a SIGHUP to download a new database
   tokio::spawn(async {
     let mut sighup = signal(SignalKind::hangup()).expect("error listening for SIGHUP");
-    while let Some(_) = sighup.recv().await {
+    while sighup.recv().await.is_some() {
       match utils::download_database(true).await {
         Ok(_) => reload_database(),
         Err(err) => error!("Error downloading new database: {:?}", err),
@@ -140,7 +143,7 @@ async fn main() -> std::io::Result<()> {
       if v == "*" {
         cors = cors.allow_any_origin();
       } else {
-        for origin in v.split(",") {
+        for origin in v.split(',') {
           cors = cors.allowed_origin(origin);
         }
       }
@@ -149,7 +152,10 @@ async fn main() -> std::io::Result<()> {
     App::new()
       .service(metadata)
       .service(lookup)
-      .wrap(Condition::new(cors_allowed_origins.is_ok(), cors))
+      .wrap(middleware::Condition::new(
+        cors_allowed_origins.is_ok(),
+        cors,
+      ))
       .wrap(
         middleware::DefaultHeaders::new().add(("server", format!("maxmind-geoip-api/{}", version))),
       )
