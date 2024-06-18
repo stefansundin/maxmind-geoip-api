@@ -93,7 +93,7 @@ fn save_mmdb(
       std::io::copy(&mut decompressor, &mut writer)?;
       writer.sync_all()?;
       fs::remove_file(read_path)?;
-    } else if fmt == file_format::FileFormat::Gzip {
+    } else if fmt == file_format::FileFormat::Bzip2 {
       // .bz2
       let reader = fs::File::open(read_path)?;
       let mut writer = fs::File::create(write_path)?;
