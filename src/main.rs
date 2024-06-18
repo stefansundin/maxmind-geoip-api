@@ -4,12 +4,11 @@ use actix_web::{get, middleware, web, App, HttpResponse, HttpServer};
 use chrono::{TimeZone, Utc};
 use log::info;
 use log::{debug, error};
-use maxminddb::{geoip2, Metadata, Mmap, Reader};
-use serde::Serialize;
+use maxminddb::{geoip2, Mmap, Reader};
 use serde_json::json;
 use std::sync::OnceLock;
 use std::sync::RwLock;
-use std::{collections::BTreeMap, env, net::IpAddr, process};
+use std::{env, net::IpAddr, process};
 use tokio::signal::unix::{signal, SignalKind};
 use tokio::time::{interval, Duration};
 
@@ -50,23 +49,6 @@ fn reload_database() {
   *reader = new_reader;
 }
 
-#[derive(Serialize)]
-#[serde(remote = "Metadata")]
-struct MetadataDef {
-  binary_format_major_version: u16,
-  binary_format_minor_version: u16,
-  build_epoch: u64,
-  database_type: String,
-  description: BTreeMap<String, String>,
-  ip_version: u16,
-  languages: Vec<String>,
-  node_count: u32,
-  record_size: u16,
-}
-
-#[derive(Serialize)]
-struct MetadataWrapper<'a>(#[serde(with = "MetadataDef")] &'a Metadata);
-
 #[get("/metadata")]
 async fn metadata() -> Result<HttpResponse, actix_web::error::Error> {
   let reader = reader_lock().read().expect("error getting reader");
@@ -75,7 +57,7 @@ async fn metadata() -> Result<HttpResponse, actix_web::error::Error> {
   return Ok(
     HttpResponse::Ok()
       .append_header(("content-type", "application/json"))
-      .body(json!(&MetadataWrapper(&reader.metadata)).to_string()),
+      .body(json!(reader.metadata).to_string()),
   );
 }
 
