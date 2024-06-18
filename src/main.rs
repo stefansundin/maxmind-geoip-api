@@ -103,6 +103,14 @@ async fn main() -> std::io::Result<()> {
     }
   });
 
+  // Send the process a SIGTERM to terminate the program
+  tokio::spawn(async {
+    let mut sigterm = signal(SignalKind::terminate()).expect("error listening for SIGTERM");
+    sigterm.recv().await;
+    debug!("Received SIGTERM");
+    process::exit(0);
+  });
+
   if let Err(err) = utils::download_database(false).await {
     error!("Error downloading database: {:?}", err);
     process::exit(1);
