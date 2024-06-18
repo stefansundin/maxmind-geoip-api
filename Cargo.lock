@@ -1175,6 +1175,7 @@ dependencies = [
  "tokio",
  "xz2",
  "zip",
+ "zstd",
 ]
 
 [[package]]

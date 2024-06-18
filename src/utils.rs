@@ -132,6 +132,14 @@ fn save_mmdb(
       std::io::copy(&mut decompressor, &mut writer)?;
       writer.sync_all()?;
       fs::remove_file(read_path)?;
+    } else if fmt == file_format::FileFormat::Zstandard {
+      // .zst
+      let reader = fs::File::open(read_path)?;
+      let mut writer = fs::File::create(write_path)?;
+      let mut decompressor = zstd::Decoder::new(reader)?;
+      std::io::copy(&mut decompressor, &mut writer)?;
+      writer.sync_all()?;
+      fs::remove_file(read_path)?;
     } else {
       break;
     }

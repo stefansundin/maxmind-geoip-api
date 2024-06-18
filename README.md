@@ -2,7 +2,7 @@ This is a tiny MaxMind GeoIP API, written in rust for minimal resource usage. Th
 
 You simply need to configure `MAXMIND_DB_URL` with a URL that has your database and run the program. Then query the API by putting the desired IP address in the path, e.g. http://localhost:3000/1.2.3.4. Get the database metadata from http://localhost:3000/metadata.
 
-The program can automatically decompress archives of the formats `.zip`, `.tar`, `.gz`, `.bz2`, and `.xz`. It will check if there's a new database update 24 hours. Update checks use the `ETag` header from the previous download to avoid downloading the file again if there isn't a new version available.
+The program can automatically decompress archives of the formats `.zip`, `.tar`, `.gz`, `.bz2`, `.xz`, and `.zst`. It will check if there's a new database update 24 hours. Update checks use the `ETag` header from the previous download to avoid downloading the file again if there isn't a new version available.
 
 See the [examples](examples) directory to get started.
 
