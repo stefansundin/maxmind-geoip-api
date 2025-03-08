@@ -1,10 +1,10 @@
 #![allow(clippy::needless_return)]
 
 use actix_cors::Cors;
-use actix_web::{get, middleware, web, App, HttpResponse, HttpServer};
+use actix_web::{App, HttpResponse, HttpServer, get, middleware, web};
 use chrono::{TimeZone, Utc};
 use log::{debug, error, info};
-use maxminddb::{geoip2, Mmap, Reader};
+use maxminddb::{Mmap, Reader, geoip2};
 use serde_json::json;
 use std::{
   env,
@@ -12,8 +12,10 @@ use std::{
   process,
   sync::{OnceLock, RwLock},
 };
-use tokio::signal::unix::{signal, SignalKind};
-use tokio::time::{interval, Duration};
+use tokio::{
+  signal::unix::{SignalKind, signal},
+  time::{Duration, interval},
+};
 
 pub mod utils;
 
