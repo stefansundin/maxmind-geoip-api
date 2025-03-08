@@ -15,12 +15,13 @@ docker buildx create --use --name multiarch --node multiarch0
 docker buildx build --pull --push --progress plain --platform linux/arm64 -t stefansundin/maxmind-geoip-api:beta .
 
 # You probably want to change the tag name if you are not me:
-docker buildx build --pull --push --progress plain --platform linux/arm64,linux/amd64 -t stefansundin/maxmind-geoip-api:v1.0.0 .
+docker buildx build --pull --push --progress plain --platform linux/arm64,linux/amd64 -t stefansundin/maxmind-geoip-api:v1.1.0 .
 
 # If the new version is stable then update tags:
-docker buildx imagetools create -t stefansundin/maxmind-geoip-api:latest stefansundin/maxmind-geoip-api:v1.0.0
+docker buildx imagetools create -t stefansundin/maxmind-geoip-api:latest stefansundin/maxmind-geoip-api:v1.1.0
 docker buildx imagetools create -t stefansundin/maxmind-geoip-api:v1 stefansundin/maxmind-geoip-api:latest
 docker buildx imagetools create -t public.ecr.aws/stefansundin/maxmind-geoip-api:latest stefansundin/maxmind-geoip-api:latest
+docker buildx imagetools create -t public.ecr.aws/stefansundin/maxmind-geoip-api:v1.1.0 stefansundin/maxmind-geoip-api:latest
 docker buildx imagetools create -t public.ecr.aws/stefansundin/maxmind-geoip-api:v1 stefansundin/maxmind-geoip-api:latest
 ```
 
