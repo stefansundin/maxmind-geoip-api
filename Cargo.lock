@@ -1312,6 +1312,7 @@ version = "1.0.0"
 dependencies = [
  "actix-cors",
  "actix-web",
+ "bytes",
  "bzip2",
  "chrono",
  "env_logger",

@@ -1,6 +1,6 @@
 #![allow(clippy::needless_return)]
 
-use actix_web::web::Buf;
+use bytes::Buf;
 use log::{debug, error, info, warn};
 use std::{
   env,
@@ -271,7 +271,6 @@ pub async fn download_database(force: bool) -> Result<(), Box<dyn Error>> {
   let temp_path2 = Path::new(data_dir()).join("database.mmdb.temp2");
   let mut temp_file = fs::File::create(&temp_path)?;
   let mut reader = response.bytes().await?.reader();
-  // why does this copy require a trait from actix_web??
   std::io::copy(&mut reader, &mut temp_file)?;
   temp_file.sync_all()?;
 
