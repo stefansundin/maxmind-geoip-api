@@ -7,6 +7,46 @@ The program can automatically decompress archives of the formats `.zip`, `.tar`,
 See the [examples](examples) directory to get started.
 
 
+## API
+
+### `GET /{ip}`
+
+Look up a single IP address.
+
+```shell
+curl http://localhost:3000/1.2.3.4
+```
+
+Returns the GeoIP data as JSON with a `200` status, or `404` if the IP is not found in the database.
+
+### `POST /lookup`
+
+Look up multiple IP addresses in a single request (up to 1000).
+
+```shell
+curl -X POST http://localhost:3000/lookup \
+  -H "Content-Type: application/json" \
+  -d '["1.2.3.4", "8.8.8.8"]'
+```
+
+Returns a JSON object mapping each IP to its GeoIP data, or `null` if not found:
+
+```json
+{
+  "1.2.3.4": { "city": { ... }, "country": { ... }, ... },
+  "8.8.8.8": { "city": { ... }, "country": { ... }, ... }
+}
+```
+
+### `GET /metadata`
+
+Returns the MaxMind database metadata.
+
+```shell
+curl http://localhost:3000/metadata
+```
+
+
 ## Docker image
 
 The docker image is available on [Docker Hub](https://hub.docker.com/r/stefansundin/maxmind-geoip-api) and [Amazon ECR](https://gallery.ecr.aws/stefansundin/maxmind-geoip-api).
