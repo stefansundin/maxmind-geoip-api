@@ -87,7 +87,12 @@ async fn lookup(addr: web::Path<IpAddr>) -> Result<HttpResponse, actix_web::erro
   );
 }
 
-const BATCH_LIMIT: usize = 1000;
+fn batch_limit() -> usize {
+  env::var("BATCH_LIMIT")
+    .ok()
+    .and_then(|v| v.parse().ok())
+    .unwrap_or(1000)
+}
 
 #[post("/lookup")]
 async fn batch_lookup(
@@ -95,9 +100,10 @@ async fn batch_lookup(
 ) -> Result<HttpResponse, actix_web::error::Error> {
   let addrs = body.into_inner();
 
-  if addrs.len() > BATCH_LIMIT {
+  let limit = batch_limit();
+  if addrs.len() > limit {
     return Ok(
-      HttpResponse::BadRequest().body(format!("Maximum of {BATCH_LIMIT} IP addresses per request")),
+      HttpResponse::BadRequest().body(format!("Maximum of {limit} IP addresses per request")),
     );
   }
 
