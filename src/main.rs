@@ -1,7 +1,7 @@
 #![allow(clippy::needless_return)]
 
 use actix_cors::Cors;
-use actix_web::{App, HttpResponse, HttpServer, get, middleware, web};
+use actix_web::{App, HttpResponse, HttpServer, get, middleware, post, web};
 use chrono::{TimeZone, Utc};
 use log::{debug, error, info};
 use maxminddb::{Mmap, Reader, geoip2};
@@ -87,6 +87,45 @@ async fn lookup(addr: web::Path<IpAddr>) -> Result<HttpResponse, actix_web::erro
   );
 }
 
+fn batch_limit() -> usize {
+  env::var("BATCH_LIMIT")
+    .ok()
+    .and_then(|v| v.parse().ok())
+    .unwrap_or(1000)
+}
+
+#[post("/lookup")]
+async fn batch_lookup(
+  body: web::Json<Vec<IpAddr>>,
+) -> Result<HttpResponse, actix_web::error::Error> {
+  let addrs = body.into_inner();
+
+  let limit = batch_limit();
+  if addrs.len() > limit {
+    return Ok(
+      HttpResponse::BadRequest().body(format!("Maximum of {limit} IP addresses per request")),
+    );
+  }
+
+  let reader = reader_lock().read().expect("error getting reader");
+
+  let mut results = serde_json::Map::new();
+  for addr in addrs {
+    let result: Result<geoip2::City, _> = reader.lookup(addr);
+    match result {
+      Ok(city) => results.insert(addr.to_string(), json!(city)),
+      Err(_) => results.insert(addr.to_string(), serde_json::Value::Null),
+    };
+  }
+
+  return Ok(
+    HttpResponse::Ok()
+      .append_header(("content-type", "application/json"))
+      .append_header(("x-maxmind-build-epoch", reader.metadata.build_epoch))
+      .body(serde_json::Value::Object(results).to_string()),
+  );
+}
+
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
   env_logger::init_from_env(env_logger::Env::default().default_filter_or("info"));
@@ -147,7 +186,7 @@ async fn main() -> std::io::Result<()> {
     let mut cors = Cors::default();
     if let Ok(ref v) = cors_allowed_origins {
       cors = cors
-        .allowed_methods(vec!["GET"])
+        .allowed_methods(vec!["GET", "POST"])
         .expose_headers(vec!["server", "x-maxmind-build-epoch"])
         .max_age(3600);
       if v == "*" {
@@ -161,6 +200,7 @@ async fn main() -> std::io::Result<()> {
 
     App::new()
       .service(metadata)
+      .service(batch_lookup)
       .service(lookup)
       .wrap(middleware::Condition::new(
         cors_allowed_origins.is_ok(),
