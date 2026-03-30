@@ -160,13 +160,15 @@ fn save_mmdb(
   }
 
   // verify that the database can be opened successfully
-  match maxminddb::Reader::open_mmap(read_path) {
-    Ok(reader) => {
-      debug!("{:?}", reader.metadata);
-    }
-    Err(err) => {
-      fs::remove_file(read_path)?;
-      return Err(format!("Error opening newly downloaded database: {}", err).into());
+  unsafe {
+    match maxminddb::Reader::open_mmap(read_path) {
+      Ok(reader) => {
+        debug!("{:?}", reader.metadata);
+      }
+      Err(err) => {
+        fs::remove_file(read_path)?;
+        return Err(format!("Error opening newly downloaded database: {}", err).into());
+      }
     }
   }
 

@@ -22,7 +22,10 @@ pub mod utils;
 const VERSION: Option<&str> = option_env!("CARGO_PKG_VERSION");
 
 fn load_database() -> Reader<Mmap> {
-  let reader = Reader::open_mmap(utils::database_path()).expect("error opening database");
+  let reader;
+  unsafe {
+    reader = Reader::open_mmap(utils::database_path()).expect("error opening database");
+  }
   let datetime = Utc
     .timestamp_opt(
       reader
@@ -72,10 +75,19 @@ async fn lookup(addr: web::Path<IpAddr>) -> Result<HttpResponse, actix_web::erro
   debug!("addr: {}", addr);
 
   let reader = reader_lock().read().expect("error getting reader");
-  let result: Result<geoip2::City, _> = reader.lookup(addr);
-  let city = match result {
-    Ok(city) => city,
-    Err(_) => return Ok(HttpResponse::NotFound().finish()),
+  let city = match reader.lookup(addr) {
+    Ok(result) => match result.decode::<geoip2::City>() {
+      Ok(Some(city)) => city,
+      Ok(None) => return Ok(HttpResponse::NotFound().finish()),
+      Err(err) => {
+        error!("Error looking up {}: {}", addr, err);
+        return Ok(HttpResponse::InternalServerError().finish());
+      }
+    },
+    Err(err) => {
+      error!("Error looking up {}: {}", addr, err);
+      return Ok(HttpResponse::InternalServerError().finish());
+    }
   };
   debug!("city: {:?}", city);
 
@@ -104,10 +116,19 @@ async fn batch_lookup(
 
   let mut results = serde_json::Map::new();
   for addr in addrs {
-    let result: Result<geoip2::City, _> = reader.lookup(addr);
-    match result {
-      Ok(city) => results.insert(addr.to_string(), json!(city)),
-      Err(_) => results.insert(addr.to_string(), serde_json::Value::Null),
+    match reader.lookup(addr) {
+      Ok(result) => match result.decode::<geoip2::City>() {
+        Ok(Some(city)) => results.insert(addr.to_string(), json!(city)),
+        Ok(None) => results.insert(addr.to_string(), serde_json::Value::Null),
+        Err(err) => {
+          error!("Error looking up {}: {}", addr, err);
+          return Ok(HttpResponse::InternalServerError().finish());
+        }
+      },
+      Err(err) => {
+        error!("Error looking up {}: {}", addr, err);
+        return Ok(HttpResponse::InternalServerError().finish());
+      }
     };
   }
 

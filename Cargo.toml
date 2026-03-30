@@ -4,24 +4,24 @@ version = "1.1.0"
 edition = "2024"
 
 [dependencies]
-actix-cors = "0.7.0"
-actix-web = "4.9.0"
-bytes = "1.10.1"
-bzip2 = "0.5.2"
-chrono = "0.4.40"
-env_logger = "0.11.6"
-file-format = "0.26.0"
-flate2 = "1.1.0"
-log = "0.4.26"
-maxminddb = { version = "0.25.0", features = ["mmap"] }
-reqwest = { version = "0.12.12", features = ["stream", "rustls-tls"], default-features = false }
-serde = { version = "1.0.218", features = ["derive"] }
-serde_json = "1.0.140"
-tar = "0.4.44"
-timeago = "0.4.2"
-tokio = { version = "1.44.0", features = ["full", "macros"] }
+actix-cors = "0.7.1"
+actix-web = "4.13.0"
+bytes = "1.11.1"
+bzip2 = "0.6.1"
+chrono = "0.4.44"
+env_logger = "0.11.10"
+file-format = "0.29.0"
+flate2 = "1.1.9"
+log = "0.4.29"
+maxminddb = { version = "0.27.3", features = ["mmap"] }
+reqwest = { version = "0.13.2", features = ["stream", "rustls"], default-features = false }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+tar = "0.4.45"
+timeago = "0.6.0"
+tokio = { version = "1.50.0", features = ["full", "macros"] }
 xz2 = "0.1.7"
-zip = "2.2.3"
+zip = "8.4.0"
 zstd = "0.13.3"
 
 [profile.release]
