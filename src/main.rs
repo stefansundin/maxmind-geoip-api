@@ -64,7 +64,7 @@ async fn metadata() -> Result<HttpResponse, actix_web::error::Error> {
 
   return Ok(
     HttpResponse::Ok()
-      .append_header(("content-type", "application/json"))
+      .insert_header(("content-type", "application/json"))
       .body(json!(reader.metadata).to_string()),
   );
 }
@@ -75,15 +75,19 @@ async fn lookup(addr: web::Path<IpAddr>) -> Result<HttpResponse, actix_web::erro
   debug!("addr: {}", addr);
 
   let reader = reader_lock().read().expect("error getting reader");
+  let network;
   let city = match reader.lookup(addr) {
-    Ok(result) => match result.decode::<geoip2::City>() {
-      Ok(Some(city)) => city,
-      Ok(None) => return Ok(HttpResponse::NotFound().finish()),
-      Err(err) => {
-        error!("Error looking up {}: {}", addr, err);
-        return Ok(HttpResponse::InternalServerError().finish());
+    Ok(result) => {
+      network = result.network();
+      match result.decode::<geoip2::City>() {
+        Ok(Some(city)) => city,
+        Ok(None) => return Ok(HttpResponse::NotFound().finish()),
+        Err(err) => {
+          error!("Error looking up {}: {}", addr, err);
+          return Ok(HttpResponse::InternalServerError().finish());
+        }
       }
-    },
+    }
     Err(err) => {
       error!("Error looking up {}: {}", addr, err);
       return Ok(HttpResponse::InternalServerError().finish());
@@ -91,10 +95,15 @@ async fn lookup(addr: web::Path<IpAddr>) -> Result<HttpResponse, actix_web::erro
   };
   debug!("city: {:?}", city);
 
+  let mut response_builder = HttpResponse::Ok();
+  if let Ok(network) = network {
+    response_builder.insert_header(("x-maxmind-network", network.to_string()));
+  }
+
   return Ok(
-    HttpResponse::Ok()
-      .append_header(("content-type", "application/json"))
-      .append_header(("x-maxmind-build-epoch", reader.metadata.build_epoch))
+    response_builder
+      .insert_header(("content-type", "application/json"))
+      .insert_header(("x-maxmind-build-epoch", reader.metadata.build_epoch))
       .body(json!(city).to_string()),
   );
 }
@@ -134,8 +143,8 @@ async fn batch_lookup(
 
   return Ok(
     HttpResponse::Ok()
-      .append_header(("content-type", "application/json"))
-      .append_header(("x-maxmind-build-epoch", reader.metadata.build_epoch))
+      .insert_header(("content-type", "application/json"))
+      .insert_header(("x-maxmind-build-epoch", reader.metadata.build_epoch))
       .body(serde_json::Value::Object(results).to_string()),
   );
 }
