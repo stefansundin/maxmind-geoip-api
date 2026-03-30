@@ -92,7 +92,7 @@ fn save_mmdb(
         }
         if path.ends_with(".mmdb") {
           std::io::copy(&mut file, &mut writer)?;
-          writer.sync_all()?;
+          writer.sync_data()?;
           fs::remove_file(read_path)?;
           found = true;
           break;
@@ -107,7 +107,7 @@ fn save_mmdb(
       let mut writer = fs::File::create(write_path)?;
       let mut decompressor = flate2::read::GzDecoder::new(reader);
       std::io::copy(&mut decompressor, &mut writer)?;
-      writer.sync_all()?;
+      writer.sync_data()?;
       fs::remove_file(read_path)?;
     } else if fmt == file_format::FileFormat::Bzip2 {
       // .bz2
@@ -115,7 +115,7 @@ fn save_mmdb(
       let mut writer = fs::File::create(write_path)?;
       let mut decompressor = bzip2::read::BzDecoder::new(reader);
       std::io::copy(&mut decompressor, &mut writer)?;
-      writer.sync_all()?;
+      writer.sync_data()?;
       fs::remove_file(read_path)?;
     } else if fmt == file_format::FileFormat::Zip {
       // .zip
@@ -131,7 +131,7 @@ fn save_mmdb(
         }
         if name.ends_with(".mmdb") {
           std::io::copy(&mut file, &mut writer)?;
-          writer.sync_all()?;
+          writer.sync_data()?;
           fs::remove_file(read_path)?;
           found = true;
           break;
@@ -146,7 +146,7 @@ fn save_mmdb(
       let mut writer = fs::File::create(write_path)?;
       let mut decompressor = xz2::read::XzDecoder::new(reader);
       std::io::copy(&mut decompressor, &mut writer)?;
-      writer.sync_all()?;
+      writer.sync_data()?;
       fs::remove_file(read_path)?;
     } else if fmt == file_format::FileFormat::Zstandard {
       // .zst
@@ -154,7 +154,7 @@ fn save_mmdb(
       let mut writer = fs::File::create(write_path)?;
       let mut decompressor = zstd::Decoder::new(reader)?;
       std::io::copy(&mut decompressor, &mut writer)?;
-      writer.sync_all()?;
+      writer.sync_data()?;
       fs::remove_file(read_path)?;
     } else {
       break;
@@ -274,7 +274,7 @@ pub async fn download_database(force: bool) -> Result<bool, Box<dyn Error>> {
   let mut temp_file = fs::File::create(&temp_path)?;
   let mut reader = response.bytes().await?.reader();
   std::io::copy(&mut reader, &mut temp_file)?;
-  temp_file.sync_all()?;
+  temp_file.sync_data()?;
 
   let extract_start_time = time::Instant::now();
   match save_mmdb(&temp_path, &temp_path2, database_path) {
