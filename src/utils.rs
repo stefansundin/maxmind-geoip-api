@@ -217,32 +217,35 @@ pub async fn download_database(force: bool) -> Result<bool, Box<dyn Error>> {
   let stamp_path = Path::new(data_dir()).join("stamp");
 
   // Skip check if we have a downloaded database already and it has been less than 24 hours since the last check
-  if !force && database_path.is_file() && stamp_path.is_file() {
-    if let Ok(metadata) = fs::metadata(&stamp_path) {
-      let modified_date = metadata
-        .modified()
-        .expect("error getting stamp last modified date");
-      let duration_since = time::SystemTime::now()
-        .duration_since(modified_date)
-        .expect("error calculating time duration since stamp last modified date");
-      if duration_since < crate::UPDATE_CHECK_INTERVAL {
-        let formatter = timeago::Formatter::new();
-        let formatted_time = formatter.convert(duration_since);
-        info!(
-          "Last checked for a database update {}, skipping check",
-          formatted_time
-        );
-        return Ok(false);
-      }
+  if !force
+    && database_path.is_file()
+    && stamp_path.is_file()
+    && let Ok(metadata) = fs::metadata(&stamp_path)
+  {
+    let modified_date = metadata
+      .modified()
+      .expect("error getting stamp last modified date");
+    let duration_since = time::SystemTime::now()
+      .duration_since(modified_date)
+      .expect("error calculating time duration since stamp last modified date");
+    if duration_since < crate::UPDATE_CHECK_INTERVAL {
+      let formatter = timeago::Formatter::new();
+      let formatted_time = formatter.convert(duration_since);
+      info!(
+        "Last checked for a database update {}, skipping check",
+        formatted_time
+      );
+      return Ok(false);
     }
   }
 
   let mut request = build_reqwest_client()?.get(&url);
   let etag_path = Path::new(data_dir()).join("etag");
-  if database_path.is_file() && etag_path.is_file() {
-    if let Ok(etag) = fs::read_to_string(&etag_path) {
-      request = request.header("If-None-Match", etag);
-    }
+  if database_path.is_file()
+    && etag_path.is_file()
+    && let Ok(etag) = fs::read_to_string(&etag_path)
+  {
+    request = request.header("If-None-Match", etag);
   }
 
   let download_start_time = time::Instant::now();
