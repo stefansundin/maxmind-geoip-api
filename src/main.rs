@@ -20,6 +20,7 @@ use tokio::{
 pub mod utils;
 
 const VERSION: Option<&str> = option_env!("CARGO_PKG_VERSION");
+const UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
 
 fn load_database() -> Reader<Mmap> {
   let reader;
@@ -186,7 +187,7 @@ async fn main() -> std::io::Result<()> {
   // Check for database updates every 24 hours
   if env::var("MAXMIND_DB_URL").is_ok() {
     tokio::spawn(async {
-      let mut interval = interval(Duration::from_secs(24 * 60 * 60));
+      let mut interval = interval(UPDATE_CHECK_INTERVAL);
       interval.tick().await;
       loop {
         interval.tick().await;

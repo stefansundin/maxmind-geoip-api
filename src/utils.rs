@@ -219,8 +219,7 @@ pub async fn download_database(force: bool) -> Result<(), Box<dyn Error>> {
       let duration_since = time::SystemTime::now()
         .duration_since(modified_date)
         .expect("error calculating time duration since stamp last modified date");
-      let one_day = time::Duration::from_secs(24 * 60 * 60);
-      if duration_since < one_day {
+      if duration_since < crate::UPDATE_CHECK_INTERVAL {
         let formatter = timeago::Formatter::new();
         let formatted_time = formatter.convert(duration_since);
         info!(
