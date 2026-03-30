@@ -26,17 +26,20 @@ Look up multiple IP addresses in a single request (up to 1000).
 ```shell
 curl -X POST http://localhost:3000/lookup \
   -H "Content-Type: application/json" \
-  -d '["1.2.3.4", "8.8.8.8"]'
+  -d '["127.0.0.1", "8.8.8.8", "2607:F8B0:400A:801::200E"]'
 ```
 
 Returns a JSON object mapping each IP to its GeoIP data, or `null` if not found:
 
 ```json
 {
-  "1.2.3.4": { "city": { ... }, "country": { ... }, ... },
-  "8.8.8.8": { "city": { ... }, "country": { ... }, ... }
+  "127.0.0.1": null,
+  "2607:f8b0:400a:801::200e": { "continent": { ... }, "country": { ... }, ... },
+  "8.8.8.8": { "continent": { ... }, "country": { ... }, ... }
 }
 ```
+
+Note that IPv6 addresses will be normalized to lowercase, as shown in the example above.
 
 ### `GET /metadata`
 
@@ -56,8 +59,24 @@ stefansundin/maxmind-geoip-api:v1
 ```
 
 ```
-public.ecr.aws/stefansundin/maxmind-geoip-api:v1
+ecr-public.aws.com/stefansundin/maxmind-geoip-api:v1
 ```
+
+
+## Configuration
+
+You can set these environment variables:
+
+----------------
+| Key          | Description | Default in docker | Default in binary | Required? |
+|--------------|-------------|-------------------|-------------------|-----------|
+| `MAXMIND_DB_URL`                   | The URL to download the MaxMind database file from. | Not set | Not set | **Required** |
+| `DATA_DIR`                         | All the program state is stored in this directory, including the downloaded database file. | `/data` | No default | **Required** |
+| `HOST`                             | The address that the program listens to. | `::` | `::` | **Required** |
+| `PORT`                             | The port that the program listens to. | `80` | `3000` | **Required** |
+| `CORS_ALLOWED_ORIGINS`             | Allowed origins for CORS. Useful if you want to call the service from JavaScript in web browsers. | No default | No default | Optional |
+| `CA_BUNDLE`                        | Path to a CA bundle to load. Useful if a self-signed certificate is used on the server hosting `MAXMIND_DB_URL`. | No default | No default | Optional |
+| `DANGER_ACCEPT_INVALID_CERTS`      | Set to `true` to accept invalid certificates when downloading `MAXMIND_DB_URL`. | No default | No default | Optional |
 
 
 ## SIGHUP
