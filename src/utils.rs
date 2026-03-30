@@ -1,7 +1,7 @@
 #![allow(clippy::needless_return)]
 
 use bytes::Buf;
-use log::{debug, error, info, warn};
+use log::{debug, error, info};
 use std::{
   env,
   error::Error,
@@ -197,20 +197,19 @@ fn build_reqwest_client() -> Result<reqwest::Client, reqwest::Error> {
   return builder.build();
 }
 
-pub async fn download_database(force: bool) -> Result<(), Box<dyn Error>> {
+/// Returns Ok(true) if a new database was downloaded, otherwise Ok(false) usually means the remote server didn't have a new database file.
+pub async fn download_database(force: bool) -> Result<bool, Box<dyn Error>> {
   let database_path = database_path();
   let url = match env::var("MAXMIND_DB_URL") {
     Ok(url) => url,
     Err(_) => {
-      if database_path.is_file() {
-        return Ok(());
-      } else {
-        error!(
+      return Err(
+        format!(
           "Please configure MAXMIND_DB_URL or place a database file at {}",
           database_path.display()
-        );
-        process::exit(1);
-      }
+        )
+        .into(),
+      );
     }
   };
 
@@ -233,7 +232,7 @@ pub async fn download_database(force: bool) -> Result<(), Box<dyn Error>> {
           "Last checked for a database update {}, skipping check",
           formatted_time
         );
-        return Ok(());
+        return Ok(false);
       }
     }
   }
@@ -253,39 +252,14 @@ pub async fn download_database(force: bool) -> Result<(), Box<dyn Error>> {
   // Touch stamp file
   fs::write(stamp_path, "")?;
 
-  let status_code = response.status();
-  match status_code {
+  match response.status() {
     reqwest::StatusCode::OK => (),
     reqwest::StatusCode::NOT_MODIFIED => {
-      info!("The database file is up to date");
-      return Ok(());
+      info!("The database is up to date");
+      return Ok(false);
     }
-    _ => {
-      if database_path.is_file() {
-        warn!("Unexpected response code: {}", status_code);
-        match fs::metadata(database_path) {
-          Ok(metadata) => {
-            let modified_date = metadata
-              .modified()
-              .expect("error getting database last modified date");
-            let duration_since = time::SystemTime::now()
-              .duration_since(modified_date)
-              .expect("error calculating time duration since database last modified date");
-            let formatter = timeago::Formatter::new();
-            let formatted_time = formatter.convert(duration_since);
-            info!(
-              "There is a database saved from {} so ignoring the error",
-              formatted_time
-            );
-            return Ok(());
-          }
-          Err(err) => {
-            return Err(format!("Error: {:?}: {}", &database_path, err).into());
-          }
-        }
-      } else {
-        return Err(format!("Unexpected response code: {}", status_code).into());
-      }
+    status_code => {
+      return Err(format!("Unexpected response code: {}", status_code).into());
     }
   }
   debug!("Downloading file took: {:?}", download_duration);
@@ -310,14 +284,7 @@ pub async fn download_database(force: bool) -> Result<(), Box<dyn Error>> {
         debug!("Extracting mmdb file took: {:?}", extract_duration);
       }
     }
-    Err(err) => {
-      if database_path.is_file() {
-        warn!("{}", err);
-        return Ok(());
-      } else {
-        return Err(err);
-      }
-    }
+    Err(err) => return Err(err),
   }
 
   if let Some(etag) = etag {
@@ -326,5 +293,5 @@ pub async fn download_database(force: bool) -> Result<(), Box<dyn Error>> {
 
   info!("Downloaded a database");
 
-  Ok(())
+  Ok(true)
 }

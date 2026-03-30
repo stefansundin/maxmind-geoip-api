@@ -162,8 +162,9 @@ async fn main() -> std::io::Result<()> {
     let mut sighup = signal(SignalKind::hangup()).expect("error listening for SIGHUP");
     while sighup.recv().await.is_some() {
       match utils::download_database(true).await {
-        Ok(_) => reload_database(),
-        Err(err) => error!("Error downloading new database: {:?}", err),
+        Ok(true) => reload_database(),
+        Ok(false) => (),
+        Err(err) => error!("Error downloading new database: {}", err),
       }
     }
   });
@@ -177,7 +178,7 @@ async fn main() -> std::io::Result<()> {
   });
 
   if let Err(err) = utils::download_database(false).await {
-    error!("Error downloading database: {:?}", err);
+    error!("Error downloading database: {}", err);
     process::exit(1);
   }
 
@@ -192,8 +193,9 @@ async fn main() -> std::io::Result<()> {
       loop {
         interval.tick().await;
         match utils::download_database(true).await {
-          Ok(_) => reload_database(),
-          Err(err) => error!("Error downloading new database: {:?}", err),
+          Ok(true) => reload_database(),
+          Ok(false) => (),
+          Err(err) => error!("Error downloading new database: {}", err),
         }
       }
     });
