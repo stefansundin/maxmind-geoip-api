@@ -63,12 +63,16 @@ fn save_mmdb(
   source_path: &Path,
   temp_path: &Path,
   destination_path: &Path,
-) -> Result<(), Box<dyn Error>> {
+) -> Result<usize, Box<dyn Error>> {
   // This function pulls out the mmdb file from a bunch of possible compression formats, even combinations that are unlikely
   // So it needs two temporary files to do this without putting everything in memory
   // At the end the mmdb file is moved to the destination path, in an atomic operation
   let mut read_path = source_path;
   let mut write_path = temp_path;
+
+  // Return how many layers deep the mmdb file was
+  // This is used to determine whether or not to output "Extracting mmdb file" statistics
+  let mut how_deep = 0;
 
   loop {
     let fmt = file_format::FileFormat::from_file(read_path)?;
@@ -157,6 +161,7 @@ fn save_mmdb(
     }
 
     std::mem::swap(&mut read_path, &mut write_path);
+    how_deep += 1;
   }
 
   // verify that the database can be opened successfully
@@ -173,7 +178,7 @@ fn save_mmdb(
   }
 
   fs::rename(read_path, destination_path)?;
-  Ok(())
+  Ok(how_deep)
 }
 
 fn build_reqwest_client() -> Result<reqwest::Client, reqwest::Error> {
@@ -194,20 +199,22 @@ fn build_reqwest_client() -> Result<reqwest::Client, reqwest::Error> {
 
 pub async fn download_database(force: bool) -> Result<(), Box<dyn Error>> {
   let database_path = database_path();
-  let url = env::var("MAXMIND_DB_URL");
-  if url.is_err() {
-    if database_path.is_file() {
-      return Ok(());
-    } else {
-      error!(
-        "Please configure MAXMIND_DB_URL or place a database file at {}",
-        database_path.display()
-      );
-      process::exit(1);
+  let url = match env::var("MAXMIND_DB_URL") {
+    Ok(url) => url,
+    Err(_) => {
+      if database_path.is_file() {
+        return Ok(());
+      } else {
+        error!(
+          "Please configure MAXMIND_DB_URL or place a database file at {}",
+          database_path.display()
+        );
+        process::exit(1);
+      }
     }
-  }
+  };
 
-  let url = url.unwrap();
+  // The stamp file keeps track of when a download request was last performed
   let stamp_path = Path::new(data_dir()).join("stamp");
 
   // Skip check if we have a downloaded database already and it has been less than 24 hours since the last check
@@ -238,40 +245,50 @@ pub async fn download_database(force: bool) -> Result<(), Box<dyn Error>> {
       request = request.header("If-None-Match", etag);
     }
   }
+
+  let download_start_time = time::Instant::now();
   let response = request.send().await?;
+  let download_duration = download_start_time.elapsed();
+
+  // Touch stamp file
+  fs::write(stamp_path, "")?;
 
   let status_code = response.status();
-  if status_code == reqwest::StatusCode::NOT_MODIFIED {
-    info!("The database file is up to date");
-    fs::write(stamp_path, "")?;
-    return Ok(());
-  } else if status_code != reqwest::StatusCode::OK {
-    if database_path.is_file() {
-      warn!("Got unexpected response code: {}", status_code);
-      match fs::metadata(database_path) {
-        Ok(metadata) => {
-          let modified_date = metadata
-            .modified()
-            .expect("error getting database last modified date");
-          let duration_since = time::SystemTime::now()
-            .duration_since(modified_date)
-            .expect("error calculating time duration since database last modified date");
-          let formatter = timeago::Formatter::new();
-          let formatted_time = formatter.convert(duration_since);
-          info!(
-            "There is a database saved from {} so ignoring the error",
-            formatted_time
-          );
-          return Ok(());
+  match status_code {
+    reqwest::StatusCode::OK => (),
+    reqwest::StatusCode::NOT_MODIFIED => {
+      info!("The database file is up to date");
+      return Ok(());
+    }
+    _ => {
+      if database_path.is_file() {
+        warn!("Unexpected response code: {}", status_code);
+        match fs::metadata(database_path) {
+          Ok(metadata) => {
+            let modified_date = metadata
+              .modified()
+              .expect("error getting database last modified date");
+            let duration_since = time::SystemTime::now()
+              .duration_since(modified_date)
+              .expect("error calculating time duration since database last modified date");
+            let formatter = timeago::Formatter::new();
+            let formatted_time = formatter.convert(duration_since);
+            info!(
+              "There is a database saved from {} so ignoring the error",
+              formatted_time
+            );
+            return Ok(());
+          }
+          Err(err) => {
+            return Err(format!("Error: {:?}: {}", &database_path, err).into());
+          }
         }
-        Err(err) => {
-          return Err(format!("Error: {:?}: {}", &database_path, err).into());
-        }
+      } else {
+        return Err(format!("Unexpected response code: {}", status_code).into());
       }
-    } else {
-      return Err(format!("Got unexpected response code: {}", status_code).into());
     }
   }
+  debug!("Downloading file took: {:?}", download_duration);
 
   let etag = response
     .headers()
@@ -285,20 +302,27 @@ pub async fn download_database(force: bool) -> Result<(), Box<dyn Error>> {
   std::io::copy(&mut reader, &mut temp_file)?;
   temp_file.sync_all()?;
 
-  if let Err(err) = save_mmdb(&temp_path, &temp_path2, database_path) {
-    if database_path.is_file() {
-      warn!("{}", err);
-      return Ok(());
-    } else {
-      return Err(err);
+  let extract_start_time = time::Instant::now();
+  match save_mmdb(&temp_path, &temp_path2, database_path) {
+    Ok(how_deep) => {
+      if how_deep > 0 {
+        let extract_duration = extract_start_time.elapsed();
+        debug!("Extracting mmdb file took: {:?}", extract_duration);
+      }
+    }
+    Err(err) => {
+      if database_path.is_file() {
+        warn!("{}", err);
+        return Ok(());
+      } else {
+        return Err(err);
+      }
     }
   }
 
   if let Some(etag) = etag {
     fs::write(etag_path, etag)?;
   }
-
-  fs::write(stamp_path, "")?;
 
   info!("Downloaded a database");
 
