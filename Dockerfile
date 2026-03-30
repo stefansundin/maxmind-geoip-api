@@ -1,4 +1,4 @@
-FROM rust:1-bookworm AS builder
+FROM rust:1-trixie AS builder
 
 ARG TARGETARCH
 ARG CARGO_BUILD_JOBS
@@ -7,6 +7,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV CC=musl-gcc
 ENV AR=ar
 ENV RUST_BACKTRACE=full
+ENV RUSTFLAGS="-Ctarget-feature=+crt-static"
 
 RUN apt-get update && apt-get install -y musl-tools
 
@@ -21,6 +22,7 @@ RUN rustup --version
 RUN case "$TARGETARCH" in \
       arm64) TARGET=aarch64-unknown-linux-musl ;; \
       amd64) TARGET=x86_64-unknown-linux-musl ;; \
+      riscv64) TARGET=riscv64gc-unknown-linux-musl ;; \
       *) echo "Does not support $TARGETARCH" && exit 1 ;; \
     esac && \
     rustup target add $TARGET && \
