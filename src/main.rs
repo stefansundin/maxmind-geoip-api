@@ -198,7 +198,7 @@ async fn main() -> std::io::Result<()> {
     });
   }
 
-  let host = env::var("HOST").unwrap_or("0.0.0.0".to_string());
+  let host = env::var("HOST").unwrap_or("::".to_string());
   let port = env::var("PORT")
     .unwrap_or("3000".to_string())
     .parse::<u16>()
