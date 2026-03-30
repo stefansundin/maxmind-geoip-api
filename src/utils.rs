@@ -49,6 +49,16 @@ pub fn database_path() -> &'static Path {
   DATABASE_PATH.get_or_init(|| Path::new(data_dir()).join("database.mmdb"))
 }
 
+pub fn batch_limit() -> &'static usize {
+  static BATCH_LIMIT: OnceLock<usize> = OnceLock::new();
+  BATCH_LIMIT.get_or_init(|| {
+    env::var("BATCH_LIMIT")
+      .ok()
+      .and_then(|v| v.parse().ok())
+      .unwrap_or(1000)
+  })
+}
+
 fn save_mmdb(
   source_path: &Path,
   temp_path: &Path,

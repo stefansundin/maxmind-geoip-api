@@ -87,23 +87,16 @@ async fn lookup(addr: web::Path<IpAddr>) -> Result<HttpResponse, actix_web::erro
   );
 }
 
-fn batch_limit() -> usize {
-  env::var("BATCH_LIMIT")
-    .ok()
-    .and_then(|v| v.parse().ok())
-    .unwrap_or(1000)
-}
-
 #[post("/lookup")]
 async fn batch_lookup(
   body: web::Json<Vec<IpAddr>>,
 ) -> Result<HttpResponse, actix_web::error::Error> {
   let addrs = body.into_inner();
 
-  let limit = batch_limit();
+  let limit = *utils::batch_limit();
   if addrs.len() > limit {
     return Ok(
-      HttpResponse::BadRequest().body(format!("Maximum of {limit} IP addresses per request")),
+      HttpResponse::PayloadTooLarge().body(format!("Maximum of {limit} IP addresses per request")),
     );
   }
 
