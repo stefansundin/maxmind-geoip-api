@@ -17,6 +17,7 @@ use tokio::{
   time::{Duration, interval},
 };
 
+pub mod types;
 pub mod utils;
 
 const VERSION: Option<&str> = option_env!("CARGO_PKG_VERSION");
@@ -157,18 +158,6 @@ async fn main() -> std::io::Result<()> {
   let version = VERSION.unwrap_or("unknown");
   info!("version {}", version);
 
-  // Send the process a SIGHUP to download a new database
-  tokio::spawn(async {
-    let mut sighup = signal(SignalKind::hangup()).expect("error listening for SIGHUP");
-    while sighup.recv().await.is_some() {
-      match utils::download_database(true).await {
-        Ok(true) => reload_database(),
-        Ok(false) => (),
-        Err(err) => error!("Error downloading new database: {}", err),
-      }
-    }
-  });
-
   // Send the process a SIGTERM to terminate the program
   tokio::spawn(async {
     let mut sigterm = signal(SignalKind::terminate()).expect("error listening for SIGTERM");
@@ -177,16 +166,45 @@ async fn main() -> std::io::Result<()> {
     process::exit(0);
   });
 
-  if let Err(err) = utils::download_database(false).await {
-    error!("Error downloading database: {}", err);
-    process::exit(1);
+  let database_url_configured = env::var("MAXMIND_DB_URL").is_ok();
+
+  {
+    let database_path = utils::database_path();
+    // If MAXMIND_DB_URL is configured then try to download the database
+    if database_url_configured {
+      if let Err(err) = utils::download_database(false).await {
+        error!("Error downloading database: {}", err);
+      }
+    }
+    // Exit with an error if there isn't a database file available on disk
+    if !database_path.is_file() {
+      if !database_url_configured {
+        error!(
+          "Please configure MAXMIND_DB_URL or place a database file at {}",
+          database_path.display()
+        );
+      }
+      process::exit(1);
+    }
   }
 
   // Load the database
   reader_lock();
 
-  // Check for database updates every 24 hours
-  if env::var("MAXMIND_DB_URL").is_ok() {
+  if database_url_configured {
+    // Send the process a SIGHUP to download a new database
+    tokio::spawn(async {
+      let mut sighup = signal(SignalKind::hangup()).expect("error listening for SIGHUP");
+      while sighup.recv().await.is_some() {
+        match utils::download_database(true).await {
+          Ok(true) => reload_database(),
+          Ok(false) => (),
+          Err(err) => error!("Error downloading new database: {}", err),
+        }
+      }
+    });
+
+    // Check for database updates every 24 hours
     tokio::spawn(async {
       let mut interval = interval(UPDATE_CHECK_INTERVAL);
       interval.tick().await;
@@ -197,6 +215,14 @@ async fn main() -> std::io::Result<()> {
           Ok(false) => (),
           Err(err) => error!("Error downloading new database: {}", err),
         }
+      }
+    });
+  } else {
+    // If the program is running without MAXMIND_DB_URL then a SIGHUP simply re-opens the database from disk, which makes it possible to replace the database
+    tokio::spawn(async {
+      let mut sighup = signal(SignalKind::hangup()).expect("error listening for SIGHUP");
+      while sighup.recv().await.is_some() {
+        reload_database();
       }
     });
   }

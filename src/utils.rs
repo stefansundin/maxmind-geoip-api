@@ -3,14 +3,14 @@
 use bytes::Buf;
 use log::{debug, error, info};
 use std::{
-  env,
-  error::Error,
-  fs,
+  env, fs,
   path::{Path, PathBuf},
   process,
   sync::OnceLock,
   time,
 };
+
+use crate::types::{DatabaseDownloadError, ExtractDatabaseFileError};
 
 pub fn get_env_var(name: &str) -> String {
   match env::var(name) {
@@ -63,7 +63,7 @@ fn save_mmdb(
   source_path: &Path,
   temp_path: &Path,
   destination_path: &Path,
-) -> Result<usize, Box<dyn Error>> {
+) -> Result<usize, ExtractDatabaseFileError> {
   // This function pulls out the mmdb file from a bunch of possible compression formats, even combinations that are unlikely
   // So it needs two temporary files to do this without putting everything in memory
   // At the end the mmdb file is moved to the destination path, in an atomic operation
@@ -99,7 +99,7 @@ fn save_mmdb(
         }
       }
       if !found {
-        return Err("mmdb file not found in archive".into());
+        return Err(ExtractDatabaseFileError::DatabaseFileNotFoundError);
       }
     } else if fmt == file_format::FileFormat::Gzip {
       // .gz
@@ -138,7 +138,7 @@ fn save_mmdb(
         }
       }
       if !found {
-        return Err("mmdb file not found in archive".into());
+        return Err(ExtractDatabaseFileError::DatabaseFileNotFoundError);
       }
     } else if fmt == file_format::FileFormat::Xz {
       // .xz
@@ -172,7 +172,7 @@ fn save_mmdb(
       }
       Err(err) => {
         fs::remove_file(read_path)?;
-        return Err(format!("Error opening newly downloaded database: {}", err).into());
+        return Err(ExtractDatabaseFileError::DatabaseInvalid(err));
       }
     }
   }
@@ -198,19 +198,11 @@ fn build_reqwest_client() -> Result<reqwest::Client, reqwest::Error> {
 }
 
 /// Returns Ok(true) if a new database was downloaded, otherwise Ok(false) usually means the remote server didn't have a new database file.
-pub async fn download_database(force: bool) -> Result<bool, Box<dyn Error>> {
+pub async fn download_database(force: bool) -> Result<bool, DatabaseDownloadError> {
   let database_path = database_path();
   let url = match env::var("MAXMIND_DB_URL") {
     Ok(url) => url,
-    Err(_) => {
-      return Err(
-        format!(
-          "Please configure MAXMIND_DB_URL or place a database file at {}",
-          database_path.display()
-        )
-        .into(),
-      );
-    }
+    Err(_) => return Err(DatabaseDownloadError::DatabaseUrlNotConfigured),
   };
 
   // The stamp file keeps track of when a download request was last performed
@@ -261,11 +253,9 @@ pub async fn download_database(force: bool) -> Result<bool, Box<dyn Error>> {
       info!("The database is up to date");
       return Ok(false);
     }
-    status_code => {
-      return Err(format!("Unexpected response code: {}", status_code).into());
-    }
+    status_code => return Err(DatabaseDownloadError::UnexpectedResponseCode(status_code)),
   }
-  debug!("Downloading file took: {:?}", download_duration);
+  debug!("Downloading file took {:?}.", download_duration);
 
   let etag = response
     .headers()
@@ -284,10 +274,10 @@ pub async fn download_database(force: bool) -> Result<bool, Box<dyn Error>> {
     Ok(how_deep) => {
       if how_deep > 0 {
         let extract_duration = extract_start_time.elapsed();
-        debug!("Extracting mmdb file took: {:?}", extract_duration);
+        debug!("Extracting mmdb file took {:?}.", extract_duration);
       }
     }
-    Err(err) => return Err(err),
+    Err(err) => return Err(DatabaseDownloadError::ExtractDatabaseFileError(err)),
   }
 
   if let Some(etag) = etag {
