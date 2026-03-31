@@ -1,7 +1,7 @@
 #![allow(clippy::needless_return)]
 
 use bytes::Buf;
-use log::{debug, error, info};
+use log::{debug, error, info, warn};
 use std::{
   env, fs,
   path::{Path, PathBuf},
@@ -47,6 +47,51 @@ pub fn data_dir() -> &'static str {
 pub fn database_path() -> &'static Path {
   static DATABASE_PATH: OnceLock<PathBuf> = OnceLock::new();
   DATABASE_PATH.get_or_init(|| Path::new(data_dir()).join("database.mmdb"))
+}
+
+/// The stamp file keeps track of when a download request was last performed.
+pub fn stamp_path() -> &'static Path {
+  static STAMP_PATH: OnceLock<PathBuf> = OnceLock::new();
+  STAMP_PATH.get_or_init(|| Path::new(data_dir()).join("stamp"))
+}
+
+/// Returns true if the stamp file is old or does not exist.
+pub fn old_stamp() -> bool {
+  let stamp_path = stamp_path();
+  if !database_path().is_file() || !stamp_path.is_file() {
+    return true;
+  }
+
+  let metadata = match fs::metadata(stamp_path) {
+    Err(err) => {
+      warn!(
+        "Error reading metadata for {}: {}",
+        stamp_path.display(),
+        err
+      );
+      return true;
+    }
+    Ok(metadata) => metadata,
+  };
+
+  let modified_date = metadata
+    .modified()
+    .expect("error getting stamp last modified date");
+  let duration_since = time::SystemTime::now()
+    .duration_since(modified_date)
+    .expect("error calculating time duration since stamp last modified date");
+  let old = duration_since > crate::UPDATE_CHECK_INTERVAL;
+
+  if !old {
+    let formatter = timeago::Formatter::new();
+    let formatted_time = formatter.convert(duration_since);
+    info!(
+      "Last checked for a database update {}, skipping check",
+      formatted_time
+    );
+  }
+
+  return old;
 }
 
 pub fn batch_limit() -> &'static usize {
@@ -198,38 +243,12 @@ fn build_reqwest_client() -> Result<reqwest::Client, reqwest::Error> {
 }
 
 /// Returns Ok(true) if a new database was downloaded, otherwise Ok(false) usually means the remote server didn't have a new database file.
-pub async fn download_database(force: bool) -> Result<bool, DatabaseDownloadError> {
+pub async fn download_database() -> Result<bool, DatabaseDownloadError> {
   let database_path = database_path();
   let url = match env::var("MAXMIND_DB_URL") {
     Ok(url) => url,
     Err(_) => return Err(DatabaseDownloadError::DatabaseUrlNotConfigured),
   };
-
-  // The stamp file keeps track of when a download request was last performed
-  let stamp_path = Path::new(data_dir()).join("stamp");
-
-  // Skip check if we have a downloaded database already and it has been less than 24 hours since the last check
-  if !force
-    && database_path.is_file()
-    && stamp_path.is_file()
-    && let Ok(metadata) = fs::metadata(&stamp_path)
-  {
-    let modified_date = metadata
-      .modified()
-      .expect("error getting stamp last modified date");
-    let duration_since = time::SystemTime::now()
-      .duration_since(modified_date)
-      .expect("error calculating time duration since stamp last modified date");
-    if duration_since < crate::UPDATE_CHECK_INTERVAL {
-      let formatter = timeago::Formatter::new();
-      let formatted_time = formatter.convert(duration_since);
-      info!(
-        "Last checked for a database update {}, skipping check",
-        formatted_time
-      );
-      return Ok(false);
-    }
-  }
 
   let mut request = build_reqwest_client()?.get(&url);
   let etag_path = Path::new(data_dir()).join("etag");
@@ -245,7 +264,7 @@ pub async fn download_database(force: bool) -> Result<bool, DatabaseDownloadErro
   let download_duration = download_start_time.elapsed();
 
   // Touch stamp file
-  fs::write(stamp_path, "")?;
+  fs::write(stamp_path(), "")?;
 
   match response.status() {
     reqwest::StatusCode::OK => (),

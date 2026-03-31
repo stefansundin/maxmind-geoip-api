@@ -171,10 +171,12 @@ async fn main() -> std::io::Result<()> {
   {
     let database_path = utils::database_path();
     // If MAXMIND_DB_URL is configured then try to download the database
-    if database_url_configured {
-      if let Err(err) = utils::download_database(false).await {
-        error!("Error downloading database: {}", err);
-      }
+    // Skip the check if the file was downloaded recently
+    if database_url_configured
+      && utils::old_stamp()
+      && let Err(err) = utils::download_database().await
+    {
+      error!("Error downloading database: {}", err);
     }
     // Exit with an error if there isn't a database file available on disk
     if !database_path.is_file() {
@@ -196,7 +198,7 @@ async fn main() -> std::io::Result<()> {
     tokio::spawn(async {
       let mut sighup = signal(SignalKind::hangup()).expect("error listening for SIGHUP");
       while sighup.recv().await.is_some() {
-        match utils::download_database(true).await {
+        match utils::download_database().await {
           Ok(true) => reload_database(),
           Ok(false) => (),
           Err(err) => error!("Error downloading new database: {}", err),
@@ -210,7 +212,7 @@ async fn main() -> std::io::Result<()> {
       interval.tick().await;
       loop {
         interval.tick().await;
-        match utils::download_database(true).await {
+        match utils::download_database().await {
           Ok(true) => reload_database(),
           Ok(false) => (),
           Err(err) => error!("Error downloading new database: {}", err),
