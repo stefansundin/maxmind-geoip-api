@@ -24,7 +24,7 @@ impl fmt::Display for ExtractDatabaseFileError {
         write!(f, "error opening newly downloaded database: {}", err)
       }
       ExtractDatabaseFileError::Error(ref err) => {
-        write!(f, "error: {}", err)
+        write!(f, "error: {:?}", err)
       }
     }
   }
@@ -66,7 +66,7 @@ impl fmt::Display for DatabaseDownloadError {
         write!(f, "MAXMIND_DB_URL is not set")
       }
       DatabaseDownloadError::ReqwestError(ref err) => {
-        write!(f, "reqwest error: {}", err)
+        write!(f, "reqwest error: {:?}", err)
       }
       DatabaseDownloadError::UnexpectedResponseCode(status_code) => {
         write!(f, "unexpected response code: {}", status_code)
@@ -79,7 +79,7 @@ impl fmt::Display for DatabaseDownloadError {
         )
       }
       DatabaseDownloadError::IoError(ref err) => {
-        write!(f, "i/o error: {}", err)
+        write!(f, "i/o error: {:?}", err)
       }
     }
   }
