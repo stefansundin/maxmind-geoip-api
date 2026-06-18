@@ -1,13 +1,6 @@
 FROM rust:1-trixie AS builder
 
-ARG TARGETARCH
-ARG CARGO_BUILD_JOBS
-
 ENV DEBIAN_FRONTEND=noninteractive
-ENV CC=musl-gcc
-ENV AR=ar
-ENV RUST_BACKTRACE=full
-ENV RUSTFLAGS="-Ctarget-feature=+crt-static"
 
 RUN apt-get update && apt-get install -y musl-tools
 
@@ -15,9 +8,17 @@ RUN mkdir /dist /dist/data
 
 WORKDIR /src
 ADD . .
-RUN find
+RUN find | sort
 
 RUN rustup --version
+
+ARG TARGETARCH
+ARG CARGO_BUILD_JOBS
+
+ENV CC=musl-gcc
+ENV AR=ar
+ENV RUST_BACKTRACE=full
+ENV RUSTFLAGS="-Ctarget-feature=+crt-static"
 
 RUN case "$TARGETARCH" in \
       arm64) TARGET=aarch64-unknown-linux-musl ;; \
