@@ -42,6 +42,9 @@ COPY --from=builder /dist /
 ENV DATA_DIR=/data
 VOLUME [ "/data" ]
 
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /ca-certificates.crt
+ENV SSL_CERT_FILE=/ca-certificates.crt
+
 ENV PORT=80
 EXPOSE 80
 
