@@ -1,6 +1,125 @@
 use core::fmt;
-use maxminddb::MaxMindDbError;
+use log::warn;
+use maxminddb::{LookupResult, MaxMindDbError, geoip2};
 use std::error::Error;
+
+#[derive(Debug)]
+pub enum DatabaseType {
+  City,
+  Country,
+  Enterprise,
+  Isp,
+  AnonymousIp,
+  ConnectionType,
+  Domain,
+  Asn,
+  DensityIncome,
+}
+
+impl From<&String> for DatabaseType {
+  fn from(database_type: &String) -> Self {
+    // The most comprehensive database type listing that I've found is here: https://github.com/oschwald/geoip2-golang/blob/09c8960066f4b46fc3c02a06f72daf602f4764df/reader.go#L148-L188
+    // To avoid having a strict mapping here, at least for now, I have decided to just do a substring match.
+    // It should be pretty resilient and will likely work well with third party databases too.
+    let t = database_type.to_ascii_lowercase();
+    if t.contains("city") {
+      Self::City
+    } else if t.contains("country") {
+      Self::Country
+    } else if t.contains("enterprise") {
+      Self::Enterprise
+    } else if t.contains("isp") {
+      Self::Isp
+    } else if t.contains("anonymous-ip") {
+      Self::AnonymousIp
+    } else if t.contains("connection-type") {
+      Self::ConnectionType
+    } else if t.contains("domain") {
+      Self::Domain
+    } else if t.contains("asn") {
+      Self::Asn
+    } else if t.contains("densityincome") {
+      Self::DensityIncome
+    } else {
+      warn!(
+        "Unsupported database type, will attempt decoding as if it were a city database. Please report this issue if this is an official database type."
+      );
+      Self::City
+    }
+  }
+}
+
+impl DatabaseType {
+  pub fn decode<'a, S>(
+    &self,
+    result: &'a LookupResult<'a, S>,
+  ) -> Result<Option<LookupData<'a>>, MaxMindDbError>
+  where
+    S: AsRef<[u8]> + 'a,
+  {
+    match self {
+      Self::City => match result.decode::<geoip2::City>() {
+        Ok(Some(value)) => Ok(Some(LookupData::City(value))),
+        Ok(None) => Ok(None),
+        Err(err) => Err(err),
+      },
+      Self::Country => match result.decode::<geoip2::Country>() {
+        Ok(Some(value)) => Ok(Some(LookupData::Country(value))),
+        Ok(None) => Ok(None),
+        Err(err) => Err(err),
+      },
+      Self::Enterprise => match result.decode::<geoip2::Enterprise>() {
+        Ok(Some(value)) => Ok(Some(LookupData::Enterprise(value))),
+        Ok(None) => Ok(None),
+        Err(err) => Err(err),
+      },
+      Self::Isp => match result.decode::<geoip2::Isp>() {
+        Ok(Some(value)) => Ok(Some(LookupData::Isp(value))),
+        Ok(None) => Ok(None),
+        Err(err) => Err(err),
+      },
+      Self::AnonymousIp => match result.decode::<geoip2::AnonymousIp>() {
+        Ok(Some(value)) => Ok(Some(LookupData::AnonymousIp(value))),
+        Ok(None) => Ok(None),
+        Err(err) => Err(err),
+      },
+      Self::ConnectionType => match result.decode::<geoip2::ConnectionType>() {
+        Ok(Some(value)) => Ok(Some(LookupData::ConnectionType(value))),
+        Ok(None) => Ok(None),
+        Err(err) => Err(err),
+      },
+      Self::Domain => match result.decode::<geoip2::Domain>() {
+        Ok(Some(value)) => Ok(Some(LookupData::Domain(value))),
+        Ok(None) => Ok(None),
+        Err(err) => Err(err),
+      },
+      Self::Asn => match result.decode::<geoip2::Asn>() {
+        Ok(Some(value)) => Ok(Some(LookupData::Asn(value))),
+        Ok(None) => Ok(None),
+        Err(err) => Err(err),
+      },
+      Self::DensityIncome => match result.decode::<geoip2::DensityIncome>() {
+        Ok(Some(value)) => Ok(Some(LookupData::DensityIncome(value))),
+        Ok(None) => Ok(None),
+        Err(err) => Err(err),
+      },
+    }
+  }
+}
+
+#[derive(serde::Serialize, Debug)]
+#[serde(untagged)]
+pub enum LookupData<'a> {
+  City(geoip2::City<'a>),
+  Country(geoip2::Country<'a>),
+  Enterprise(geoip2::Enterprise<'a>),
+  Isp(geoip2::Isp<'a>),
+  AnonymousIp(geoip2::AnonymousIp),
+  ConnectionType(geoip2::ConnectionType<'a>),
+  Domain(geoip2::Domain<'a>),
+  Asn(geoip2::Asn<'a>),
+  DensityIncome(geoip2::DensityIncome),
+}
 
 pub enum ExtractDatabaseFileError {
   /// An mmdb file was not found in the archive.

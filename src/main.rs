@@ -4,7 +4,7 @@ use actix_cors::Cors;
 use actix_web::{App, HttpResponse, HttpServer, get, middleware, post, web};
 use chrono::{TimeZone, Utc};
 use log::{debug, error, info};
-use maxminddb::{Mmap, Reader, geoip2};
+use maxminddb::{Mmap, Reader};
 use serde_json::json;
 use std::{
   env,
@@ -17,13 +17,15 @@ use tokio::{
   time::{Duration, interval},
 };
 
+use crate::types::DatabaseType;
+
 pub mod types;
 pub mod utils;
 
 const VERSION: Option<&str> = option_env!("CARGO_PKG_VERSION");
 const UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
 
-fn load_database() -> Reader<Mmap> {
+fn load_database() -> (DatabaseType, Reader<Mmap>) {
   let reader;
   unsafe {
     reader = Reader::open_mmap(utils::database_path()).expect("error opening database");
@@ -38,16 +40,18 @@ fn load_database() -> Reader<Mmap> {
       0,
     )
     .unwrap();
+  let database_type: DatabaseType = (&reader.metadata().database_type).into();
   info!(
-    "Loaded a {} database dated {}",
+    "Loaded a database dated {} of type {:?} ({:?})",
+    datetime.format("%Y-%m-%d"),
+    database_type,
     reader.metadata().database_type,
-    datetime.format("%Y-%m-%d")
   );
-  return reader;
+  return (database_type, reader);
 }
 
-fn reader_lock() -> &'static RwLock<Reader<Mmap>> {
-  static READER_LOCK: OnceLock<RwLock<Reader<Mmap>>> = OnceLock::new();
+fn reader_lock() -> &'static RwLock<(DatabaseType, Reader<Mmap>)> {
+  static READER_LOCK: OnceLock<RwLock<(DatabaseType, Reader<Mmap>)>> = OnceLock::new();
   READER_LOCK.get_or_init(|| RwLock::new(load_database()))
 }
 
@@ -61,7 +65,8 @@ fn reload_database() {
 
 #[get("/metadata")]
 async fn metadata() -> Result<HttpResponse, actix_web::error::Error> {
-  let reader = reader_lock().read().expect("error getting reader");
+  let guard = reader_lock().read().expect("error getting reader");
+  let reader = &guard.1;
   debug!("{:?}", reader.metadata());
 
   return Ok(
@@ -76,29 +81,27 @@ async fn lookup(addr: web::Path<IpAddr>) -> Result<HttpResponse, actix_web::erro
   let addr = addr.into_inner();
   debug!("addr: {}", addr);
 
-  let reader = reader_lock().read().expect("error getting reader");
-  let network;
-  let city = match reader.lookup(addr) {
-    Ok(result) => {
-      network = result.network();
-      match result.decode::<geoip2::City>() {
-        Ok(Some(city)) => city,
-        Ok(None) => return Ok(HttpResponse::NotFound().finish()),
-        Err(err) => {
-          error!("Error looking up {}: {}", addr, err);
-          return Ok(HttpResponse::InternalServerError().finish());
-        }
-      }
-    }
+  let guard = reader_lock().read().expect("error getting reader");
+  let (database_type, reader) = (&guard.0, &guard.1);
+  let result = match reader.lookup(addr) {
+    Ok(result) => result,
     Err(err) => {
       error!("Error looking up {}: {}", addr, err);
       return Ok(HttpResponse::InternalServerError().finish());
     }
   };
-  debug!("city: {:?}", city);
+  let data = match database_type.decode(&result) {
+    Ok(Some(data)) => data,
+    Ok(None) => return Ok(HttpResponse::NotFound().finish()),
+    Err(err) => {
+      error!("Error decoding data for {}: {}", addr, err);
+      return Ok(HttpResponse::InternalServerError().finish());
+    }
+  };
+  debug!("data: {:?}", data);
 
   let mut response_builder = HttpResponse::Ok();
-  if let Ok(network) = network {
+  if let Ok(network) = result.network() {
     response_builder.insert_header(("x-maxmind-network", network.to_string()));
   }
 
@@ -106,7 +109,7 @@ async fn lookup(addr: web::Path<IpAddr>) -> Result<HttpResponse, actix_web::erro
     response_builder
       .insert_header(("content-type", "application/json"))
       .insert_header(("x-maxmind-build-epoch", reader.metadata().build_epoch))
-      .body(json!(city).to_string()),
+      .body(json!(data).to_string()),
   );
 }
 
@@ -123,21 +126,23 @@ async fn batch_lookup(
     );
   }
 
-  let reader = reader_lock().read().expect("error getting reader");
-
+  let guard = reader_lock().read().expect("error getting reader");
+  let (database_type, reader) = (&guard.0, &guard.1);
   let mut results = serde_json::Map::new();
+
   for addr in addrs {
-    match reader.lookup(addr) {
-      Ok(result) => match result.decode::<geoip2::City>() {
-        Ok(Some(city)) => results.insert(addr.to_string(), json!(city)),
-        Ok(None) => results.insert(addr.to_string(), serde_json::Value::Null),
-        Err(err) => {
-          error!("Error looking up {}: {}", addr, err);
-          return Ok(HttpResponse::InternalServerError().finish());
-        }
-      },
+    let result = match reader.lookup(addr) {
+      Ok(result) => result,
       Err(err) => {
         error!("Error looking up {}: {}", addr, err);
+        return Ok(HttpResponse::InternalServerError().finish());
+      }
+    };
+    match database_type.decode(&result) {
+      Ok(Some(data)) => results.insert(addr.to_string(), json!(data)),
+      Ok(None) => results.insert(addr.to_string(), serde_json::Value::Null),
+      Err(err) => {
+        error!("Error decoding data for {}: {}", addr, err);
         return Ok(HttpResponse::InternalServerError().finish());
       }
     };

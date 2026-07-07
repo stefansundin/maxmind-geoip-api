@@ -1,6 +1,6 @@
 This is a tiny MaxMind GeoIP API, written in rust for minimal resource usage. The docker image comes in at less than 5 MB uncompressed. This makes it convenient to run as a sidecar container.
 
-You simply need to configure `MAXMIND_DB_URL` with a URL for your database, and `DATA_DIR` to define where to store the database, and run the program.
+You simply need to configure `MAXMIND_DB_URL` with a URL for your database, and `DATA_DIR` to define where to store the database, and run the program. It should work well with all of the database types supported by [the underlying library](https://github.com/oschwald/maxminddb-rust/blob/v0.29.0/src/geoip2.rs#L6-L16).
 
 The program can automatically decompress archives of the formats `.zip`, `.tar`, `.gz`, `.bz2`, `.xz`, and `.zst`. It will check if there's a new database update every 24 hours. Update checks use the `ETag` header from the previous download to avoid downloading the file again if there isn't a new version available.
 
