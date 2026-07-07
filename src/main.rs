@@ -31,7 +31,7 @@ fn load_database() -> Reader<Mmap> {
   let datetime = Utc
     .timestamp_opt(
       reader
-        .metadata
+        .metadata()
         .build_epoch
         .try_into()
         .expect("parsing build_epoch"),
@@ -40,7 +40,7 @@ fn load_database() -> Reader<Mmap> {
     .unwrap();
   info!(
     "Loaded a {} database dated {}",
-    reader.metadata.database_type,
+    reader.metadata().database_type,
     datetime.format("%Y-%m-%d")
   );
   return reader;
@@ -62,12 +62,12 @@ fn reload_database() {
 #[get("/metadata")]
 async fn metadata() -> Result<HttpResponse, actix_web::error::Error> {
   let reader = reader_lock().read().expect("error getting reader");
-  debug!("{:?}", reader.metadata);
+  debug!("{:?}", reader.metadata());
 
   return Ok(
     HttpResponse::Ok()
       .insert_header(("content-type", "application/json"))
-      .body(json!(reader.metadata).to_string()),
+      .body(json!(reader.metadata()).to_string()),
   );
 }
 
@@ -105,7 +105,7 @@ async fn lookup(addr: web::Path<IpAddr>) -> Result<HttpResponse, actix_web::erro
   return Ok(
     response_builder
       .insert_header(("content-type", "application/json"))
-      .insert_header(("x-maxmind-build-epoch", reader.metadata.build_epoch))
+      .insert_header(("x-maxmind-build-epoch", reader.metadata().build_epoch))
       .body(json!(city).to_string()),
   );
 }
@@ -146,7 +146,7 @@ async fn batch_lookup(
   return Ok(
     HttpResponse::Ok()
       .insert_header(("content-type", "application/json"))
-      .insert_header(("x-maxmind-build-epoch", reader.metadata.build_epoch))
+      .insert_header(("x-maxmind-build-epoch", reader.metadata().build_epoch))
       .body(serde_json::Value::Object(results).to_string()),
   );
 }

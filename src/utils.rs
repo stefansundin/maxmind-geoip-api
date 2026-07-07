@@ -213,7 +213,7 @@ fn save_mmdb(
   unsafe {
     match maxminddb::Reader::open_mmap(read_path) {
       Ok(reader) => {
-        debug!("{:?}", reader.metadata);
+        debug!("{:?}", reader.metadata());
       }
       Err(err) => {
         fs::remove_file(read_path)?;
