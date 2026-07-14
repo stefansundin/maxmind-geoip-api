@@ -64,19 +64,13 @@ pub fn old_stamp() -> bool {
 
   let metadata = match fs::metadata(stamp_path) {
     Err(err) => {
-      warn!(
-        "Error reading metadata for {}: {}",
-        stamp_path.display(),
-        err
-      );
+      warn!("Error reading metadata for {}: {}", stamp_path.display(), err);
       return true;
     }
     Ok(metadata) => metadata,
   };
 
-  let modified_date = metadata
-    .modified()
-    .expect("error getting stamp last modified date");
+  let modified_date = metadata.modified().expect("error getting stamp last modified date");
   let duration_since = time::SystemTime::now()
     .duration_since(modified_date)
     .expect("error calculating time duration since stamp last modified date");
@@ -85,10 +79,7 @@ pub fn old_stamp() -> bool {
   if !old {
     let formatter = timeago::Formatter::new();
     let formatted_time = formatter.convert(duration_since);
-    info!(
-      "Last checked for a database update {}, skipping check",
-      formatted_time
-    );
+    info!("Last checked for a database update {}, skipping check", formatted_time);
   }
 
   return old;
@@ -96,19 +87,10 @@ pub fn old_stamp() -> bool {
 
 pub fn batch_limit() -> &'static usize {
   static BATCH_LIMIT: OnceLock<usize> = OnceLock::new();
-  BATCH_LIMIT.get_or_init(|| {
-    env::var("BATCH_LIMIT")
-      .ok()
-      .and_then(|v| v.parse().ok())
-      .unwrap_or(1000)
-  })
+  BATCH_LIMIT.get_or_init(|| env::var("BATCH_LIMIT").ok().and_then(|v| v.parse().ok()).unwrap_or(1000))
 }
 
-fn save_mmdb(
-  source_path: &Path,
-  temp_path: &Path,
-  destination_path: &Path,
-) -> Result<usize, ExtractDatabaseFileError> {
+fn save_mmdb(source_path: &Path, temp_path: &Path, destination_path: &Path) -> Result<usize, ExtractDatabaseFileError> {
   // This function pulls out the mmdb file from a bunch of possible compression formats, even combinations that are unlikely
   // So it needs two temporary files to do this without putting everything in memory
   // At the end the mmdb file is moved to the destination path, in an atomic operation
@@ -276,10 +258,7 @@ pub async fn download_database() -> Result<bool, DatabaseDownloadError> {
   }
   debug!("Downloading file took {:?}.", download_duration);
 
-  let etag = response
-    .headers()
-    .get("ETag")
-    .and_then(|v| v.to_str().ok().map(|v| v.to_string()));
+  let etag = response.headers().get("ETag").and_then(|v| v.to_str().ok().map(|v| v.to_string()));
 
   let temp_path = Path::new(data_dir()).join("database.mmdb.temp");
   let temp_path2 = Path::new(data_dir()).join("database.mmdb.temp2");
