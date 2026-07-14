@@ -25,6 +25,8 @@ pub mod utils;
 const VERSION: Option<&str> = option_env!("CARGO_PKG_VERSION");
 const UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
 
+static DB_LOCK: OnceLock<RwLock<Database>> = OnceLock::new();
+
 fn load_database() -> Result<Database, MaxMindDbError> {
   let db = Database::new(utils::database_path())?;
 
@@ -44,15 +46,10 @@ fn load_database() -> Result<Database, MaxMindDbError> {
   Ok(db)
 }
 
-fn db_lock() -> &'static RwLock<Database> {
-  static DB_LOCK: OnceLock<RwLock<Database>> = OnceLock::new();
-  DB_LOCK.get_or_init(|| RwLock::new(load_database().expect("error opening database")))
-}
-
 fn reload_database() {
   match load_database() {
     Ok(new_db) => {
-      let mut db = db_lock().write().expect("error getting write-access to the database");
+      let mut db = DB_LOCK.wait().write().expect("error getting write-access to the db");
       *db = new_db;
     }
     Err(err) => {
@@ -63,7 +60,7 @@ fn reload_database() {
 
 #[get("/metadata")]
 async fn metadata() -> Result<HttpResponse, actix_web::error::Error> {
-  let db = db_lock().read().expect("error getting db");
+  let db = DB_LOCK.wait().read().expect("error getting db");
   let metadata = db.reader.metadata();
   debug!("{:?}", metadata);
 
@@ -75,7 +72,7 @@ async fn lookup(addr: web::Path<IpAddr>) -> Result<HttpResponse, actix_web::erro
   let addr = addr.into_inner();
   debug!("addr: {}", addr);
 
-  let db = db_lock().read().expect("error getting db");
+  let db = DB_LOCK.wait().read().expect("error getting db");
   let result = match db.reader.lookup(addr) {
     Ok(result) => result,
     Err(err) => {
@@ -115,7 +112,7 @@ async fn batch_lookup(body: web::Json<Vec<IpAddr>>) -> Result<HttpResponse, acti
     return Ok(HttpResponse::PayloadTooLarge().body(format!("Maximum of {limit} IP addresses per request")));
   }
 
-  let db = db_lock().read().expect("error getting db");
+  let db = DB_LOCK.wait().read().expect("error getting db");
   let mut results = serde_json::Map::new();
 
   for addr in addrs {
@@ -159,10 +156,12 @@ async fn main() -> std::io::Result<()> {
     process::exit(0);
   });
 
-  let database_url_configured = env::var("MAXMIND_DB_URL").is_ok();
-
-  {
+  // Asynchronously download and load the database file while starting the HTTP server below
+  // Requests that come in during this initialization will block on the database becoming ready
+  tokio::spawn(async {
+    let database_url_configured = env::var("MAXMIND_DB_URL").is_ok();
     let database_path = utils::database_path();
+
     // If MAXMIND_DB_URL is configured then try to download the database
     // Skip the check if the file was downloaded recently
     if database_url_configured
@@ -178,46 +177,51 @@ async fn main() -> std::io::Result<()> {
       }
       process::exit(1);
     }
-  }
 
-  // Load the database
-  db_lock();
-
-  if database_url_configured {
-    // Send the process a SIGHUP to download a new database
-    tokio::spawn(async {
-      let mut sighup = signal(SignalKind::hangup()).expect("error listening for SIGHUP");
-      while sighup.recv().await.is_some() {
-        match utils::download_database().await {
-          Ok(true) => reload_database(),
-          Ok(false) => (),
-          Err(err) => error!("Error downloading new database: {}", err),
-        }
-      }
+    // Initialize the database
+    DB_LOCK.get_or_init(|| {
+      RwLock::new(load_database().unwrap_or_else(|err| {
+        error!("Error initializing database: {:?}", err);
+        process::exit(1);
+      }))
     });
 
-    // Check for database updates every 24 hours
-    tokio::spawn(async {
-      let mut interval = interval(UPDATE_CHECK_INTERVAL);
-      interval.tick().await;
-      loop {
+    if database_url_configured {
+      // Send the process a SIGHUP to download a new database
+      tokio::spawn(async {
+        let mut sighup = signal(SignalKind::hangup()).expect("error listening for SIGHUP");
+        while sighup.recv().await.is_some() {
+          match utils::download_database().await {
+            Ok(true) => reload_database(),
+            Ok(false) => (),
+            Err(err) => error!("Error downloading new database: {}", err),
+          }
+        }
+      });
+
+      // Check for database updates every 24 hours
+      tokio::spawn(async {
+        let mut interval = interval(UPDATE_CHECK_INTERVAL);
         interval.tick().await;
-        match utils::download_database().await {
-          Ok(true) => reload_database(),
-          Ok(false) => (),
-          Err(err) => error!("Error downloading new database: {}", err),
+        loop {
+          interval.tick().await;
+          match utils::download_database().await {
+            Ok(true) => reload_database(),
+            Ok(false) => (),
+            Err(err) => error!("Error downloading new database: {}", err),
+          }
         }
-      }
-    });
-  } else {
-    // If the program is running without MAXMIND_DB_URL then a SIGHUP simply re-opens the database from disk, which makes it possible to replace the database
-    tokio::spawn(async {
-      let mut sighup = signal(SignalKind::hangup()).expect("error listening for SIGHUP");
-      while sighup.recv().await.is_some() {
-        reload_database();
-      }
-    });
-  }
+      });
+    } else {
+      // If the program is running without MAXMIND_DB_URL then a SIGHUP simply re-opens the database from disk, which makes it possible to replace the database
+      tokio::spawn(async {
+        let mut sighup = signal(SignalKind::hangup()).expect("error listening for SIGHUP");
+        while sighup.recv().await.is_some() {
+          reload_database();
+        }
+      });
+    }
+  });
 
   let host = env::var("HOST").unwrap_or("::".to_string());
   let port = env::var("PORT").unwrap_or("3000".to_string()).parse::<u16>().unwrap();
