@@ -1,7 +1,24 @@
 use core::fmt;
 use log::warn;
-use maxminddb::{LookupResult, MaxMindDbError, geoip2};
-use std::error::Error;
+use maxminddb::{LookupResult, MaxMindDbError, Mmap, Reader, geoip2};
+use std::{error::Error, path::Path};
+
+#[derive(Debug)]
+pub struct Database {
+  pub reader: Reader<Mmap>,
+  pub database_type: DatabaseType,
+}
+
+impl Database {
+  pub fn new<P: AsRef<Path>>(database: P) -> Result<Self, MaxMindDbError> {
+    let reader;
+    unsafe {
+      reader = Reader::open_mmap(database)?;
+    }
+    let database_type: DatabaseType = (&reader.metadata().database_type).into();
+    Ok(Self { reader, database_type })
+  }
+}
 
 #[derive(Debug)]
 pub enum DatabaseType {
@@ -41,19 +58,14 @@ impl From<&String> for DatabaseType {
     } else if t.contains("densityincome") {
       Self::DensityIncome
     } else {
-      warn!(
-        "Unsupported database type, will attempt decoding as if it were a city database. Please report this issue if this is an official database type."
-      );
+      warn!("Unsupported database type, will attempt decoding as if it were a city database. Please report this issue if this is an official database type.");
       Self::City
     }
   }
 }
 
 impl DatabaseType {
-  pub fn decode<'a, S>(
-    &self,
-    result: &'a LookupResult<'a, S>,
-  ) -> Result<Option<LookupData<'a>>, MaxMindDbError>
+  pub fn decode<'a, S>(&self, result: &'a LookupResult<'a, S>) -> Result<Option<LookupData<'a>>, MaxMindDbError>
   where
     S: AsRef<[u8]> + 'a,
   {
@@ -191,11 +203,7 @@ impl fmt::Display for DatabaseDownloadError {
         write!(f, "unexpected response code: {}", status_code)
       }
       DatabaseDownloadError::ExtractDatabaseFileError(ref err) => {
-        write!(
-          f,
-          "could not extract an .mmdb file from the archive: {}",
-          err
-        )
+        write!(f, "could not extract an .mmdb file from the archive: {}", err)
       }
       DatabaseDownloadError::IoError(ref err) => {
         write!(f, "i/o error: {:?}", err)
