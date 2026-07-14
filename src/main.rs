@@ -4,7 +4,7 @@ use actix_cors::Cors;
 use actix_web::{App, HttpResponse, HttpServer, get, middleware, post, web};
 use chrono::{TimeZone, Utc};
 use log::{debug, error, info};
-use maxminddb::{Mmap, Reader, geoip2};
+use maxminddb::MaxMindDbError;
 use serde_json::json;
 use std::{
   env,
@@ -17,58 +17,57 @@ use tokio::{
   time::{Duration, interval},
 };
 
+use crate::types::Database;
+
 pub mod types;
 pub mod utils;
 
 const VERSION: Option<&str> = option_env!("CARGO_PKG_VERSION");
 const UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
 
-fn load_database() -> Reader<Mmap> {
-  let reader;
-  unsafe {
-    reader = Reader::open_mmap(utils::database_path()).expect("error opening database");
+fn load_database() -> Result<Database, MaxMindDbError> {
+  let db = Database::new(utils::database_path())?;
+
+  if let Ok(build_epoch) = db.reader.metadata().build_epoch.try_into()
+    && let Some(datetime) = Utc.timestamp_opt(build_epoch, 0).single()
+  {
+    info!(
+      "Loaded a database of type {:?} ({:?}) dated {}",
+      db.database_type,
+      db.reader.metadata().database_type,
+      datetime.format("%Y-%m-%d")
+    );
+  } else {
+    info!("Loaded a database of type {:?} ({:?})", db.database_type, db.reader.metadata().database_type);
   }
-  let datetime = Utc
-    .timestamp_opt(
-      reader
-        .metadata()
-        .build_epoch
-        .try_into()
-        .expect("parsing build_epoch"),
-      0,
-    )
-    .unwrap();
-  info!(
-    "Loaded a {} database dated {}",
-    reader.metadata().database_type,
-    datetime.format("%Y-%m-%d")
-  );
-  return reader;
+
+  Ok(db)
 }
 
-fn reader_lock() -> &'static RwLock<Reader<Mmap>> {
-  static READER_LOCK: OnceLock<RwLock<Reader<Mmap>>> = OnceLock::new();
-  READER_LOCK.get_or_init(|| RwLock::new(load_database()))
+fn db_lock() -> &'static RwLock<Database> {
+  static DB_LOCK: OnceLock<RwLock<Database>> = OnceLock::new();
+  DB_LOCK.get_or_init(|| RwLock::new(load_database().expect("error opening database")))
 }
 
 fn reload_database() {
-  let new_reader = load_database();
-  let mut reader = reader_lock()
-    .write()
-    .expect("error getting write-access to reader");
-  *reader = new_reader;
+  match load_database() {
+    Ok(new_db) => {
+      let mut db = db_lock().write().expect("error getting write-access to the database");
+      *db = new_db;
+    }
+    Err(err) => {
+      error!("Error reloading database: {:?}", err)
+    }
+  }
 }
 
 #[get("/metadata")]
 async fn metadata() -> Result<HttpResponse, actix_web::error::Error> {
-  let reader = reader_lock().read().expect("error getting reader");
-  debug!("{:?}", reader.metadata());
+  let db = db_lock().read().expect("error getting db");
+  let metadata = db.reader.metadata();
+  debug!("{:?}", metadata);
 
-  return Ok(
-    HttpResponse::Ok()
-      .insert_header(("content-type", "application/json"))
-      .body(json!(reader.metadata()).to_string()),
-  );
+  return Ok(HttpResponse::Ok().insert_header(("content-type", "application/json")).body(json!(metadata).to_string()));
 }
 
 #[get("/{ip}")]
@@ -76,68 +75,62 @@ async fn lookup(addr: web::Path<IpAddr>) -> Result<HttpResponse, actix_web::erro
   let addr = addr.into_inner();
   debug!("addr: {}", addr);
 
-  let reader = reader_lock().read().expect("error getting reader");
-  let network;
-  let city = match reader.lookup(addr) {
-    Ok(result) => {
-      network = result.network();
-      match result.decode::<geoip2::City>() {
-        Ok(Some(city)) => city,
-        Ok(None) => return Ok(HttpResponse::NotFound().finish()),
-        Err(err) => {
-          error!("Error looking up {}: {}", addr, err);
-          return Ok(HttpResponse::InternalServerError().finish());
-        }
-      }
-    }
+  let db = db_lock().read().expect("error getting db");
+  let result = match db.reader.lookup(addr) {
+    Ok(result) => result,
     Err(err) => {
       error!("Error looking up {}: {}", addr, err);
       return Ok(HttpResponse::InternalServerError().finish());
     }
   };
-  debug!("city: {:?}", city);
+  let data = match db.database_type.decode(&result) {
+    Ok(Some(data)) => data,
+    Ok(None) => return Ok(HttpResponse::NotFound().finish()),
+    Err(err) => {
+      error!("Error decoding data for {}: {}", addr, err);
+      return Ok(HttpResponse::InternalServerError().finish());
+    }
+  };
+  debug!("data: {:?}", data);
 
   let mut response_builder = HttpResponse::Ok();
-  if let Ok(network) = network {
+  if let Ok(network) = result.network() {
     response_builder.insert_header(("x-maxmind-network", network.to_string()));
   }
 
   return Ok(
     response_builder
       .insert_header(("content-type", "application/json"))
-      .insert_header(("x-maxmind-build-epoch", reader.metadata().build_epoch))
-      .body(json!(city).to_string()),
+      .insert_header(("x-maxmind-build-epoch", db.reader.metadata().build_epoch))
+      .body(json!(data).to_string()),
   );
 }
 
 #[post("/lookup")]
-async fn batch_lookup(
-  body: web::Json<Vec<IpAddr>>,
-) -> Result<HttpResponse, actix_web::error::Error> {
+async fn batch_lookup(body: web::Json<Vec<IpAddr>>) -> Result<HttpResponse, actix_web::error::Error> {
   let addrs = body.into_inner();
 
   let limit = *utils::batch_limit();
   if addrs.len() > limit {
-    return Ok(
-      HttpResponse::PayloadTooLarge().body(format!("Maximum of {limit} IP addresses per request")),
-    );
+    return Ok(HttpResponse::PayloadTooLarge().body(format!("Maximum of {limit} IP addresses per request")));
   }
 
-  let reader = reader_lock().read().expect("error getting reader");
-
+  let db = db_lock().read().expect("error getting db");
   let mut results = serde_json::Map::new();
+
   for addr in addrs {
-    match reader.lookup(addr) {
-      Ok(result) => match result.decode::<geoip2::City>() {
-        Ok(Some(city)) => results.insert(addr.to_string(), json!(city)),
-        Ok(None) => results.insert(addr.to_string(), serde_json::Value::Null),
-        Err(err) => {
-          error!("Error looking up {}: {}", addr, err);
-          return Ok(HttpResponse::InternalServerError().finish());
-        }
-      },
+    let result = match db.reader.lookup(addr) {
+      Ok(result) => result,
       Err(err) => {
         error!("Error looking up {}: {}", addr, err);
+        return Ok(HttpResponse::InternalServerError().finish());
+      }
+    };
+    match db.database_type.decode(&result) {
+      Ok(Some(data)) => results.insert(addr.to_string(), json!(data)),
+      Ok(None) => results.insert(addr.to_string(), serde_json::Value::Null),
+      Err(err) => {
+        error!("Error decoding data for {}: {}", addr, err);
         return Ok(HttpResponse::InternalServerError().finish());
       }
     };
@@ -146,7 +139,7 @@ async fn batch_lookup(
   return Ok(
     HttpResponse::Ok()
       .insert_header(("content-type", "application/json"))
-      .insert_header(("x-maxmind-build-epoch", reader.metadata().build_epoch))
+      .insert_header(("x-maxmind-build-epoch", db.reader.metadata().build_epoch))
       .body(serde_json::Value::Object(results).to_string()),
   );
 }
@@ -181,17 +174,14 @@ async fn main() -> std::io::Result<()> {
     // Exit with an error if there isn't a database file available on disk
     if !database_path.is_file() {
       if !database_url_configured {
-        error!(
-          "Please configure MAXMIND_DB_URL or place a database file at {}",
-          database_path.display()
-        );
+        error!("Please configure MAXMIND_DB_URL or place a database file at {}", database_path.display());
       }
       process::exit(1);
     }
   }
 
   // Load the database
-  reader_lock();
+  db_lock();
 
   if database_url_configured {
     // Send the process a SIGHUP to download a new database
@@ -230,19 +220,13 @@ async fn main() -> std::io::Result<()> {
   }
 
   let host = env::var("HOST").unwrap_or("::".to_string());
-  let port = env::var("PORT")
-    .unwrap_or("3000".to_string())
-    .parse::<u16>()
-    .unwrap();
+  let port = env::var("PORT").unwrap_or("3000".to_string()).parse::<u16>().unwrap();
 
   HttpServer::new(move || {
     let cors_allowed_origins = env::var("CORS_ALLOWED_ORIGINS");
     let mut cors = Cors::default();
     if let Ok(ref v) = cors_allowed_origins {
-      cors = cors
-        .allowed_methods(vec!["GET", "POST"])
-        .expose_headers(vec!["server", "x-maxmind-build-epoch"])
-        .max_age(3600);
+      cors = cors.allowed_methods(vec!["GET", "POST"]).expose_headers(vec!["server", "x-maxmind-build-epoch"]).max_age(3600);
       if v == "*" {
         cors = cors.allow_any_origin();
       } else {
@@ -256,19 +240,10 @@ async fn main() -> std::io::Result<()> {
       .service(metadata)
       .service(batch_lookup)
       .service(lookup)
-      .wrap(middleware::Condition::new(
-        cors_allowed_origins.is_ok(),
-        cors,
-      ))
-      .wrap(
-        middleware::DefaultHeaders::new().add(("server", format!("maxmind-geoip-api/{}", version))),
-      )
+      .wrap(middleware::Condition::new(cors_allowed_origins.is_ok(), cors))
+      .wrap(middleware::DefaultHeaders::new().add(("server", format!("maxmind-geoip-api/{}", version))))
       .wrap(middleware::Logger::new(
-        env::var("ACCESS_LOG_FORMAT")
-          .unwrap_or(String::from(
-            r#"%{r}a "%r" %s %b "%{Origin}i" "%{User-Agent}i" %T"#,
-          ))
-          .as_str(),
+        env::var("ACCESS_LOG_FORMAT").unwrap_or(String::from(r#"%{r}a "%r" %s %b "%{Origin}i" "%{User-Agent}i" %T"#)).as_str(),
       ))
   })
   .bind((host, port))?
