@@ -23,9 +23,10 @@ pub mod types;
 pub mod utils;
 
 const VERSION: Option<&str> = option_env!("CARGO_PKG_VERSION");
+const INITIAL_CHECK_INTERVAL: Duration = Duration::from_secs(30);
 const UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
 
-static DB_LOCK: OnceLock<RwLock<Database>> = OnceLock::new();
+static DB_LOCK: OnceLock<RwLock<Option<Database>>> = OnceLock::new();
 
 fn load_database() -> Result<Database, MaxMindDbError> {
   let db = Database::new(utils::database_path())?;
@@ -46,21 +47,29 @@ fn load_database() -> Result<Database, MaxMindDbError> {
   Ok(db)
 }
 
-fn reload_database() {
+fn reload_database() -> bool {
   match load_database() {
     Ok(new_db) => {
-      let mut db = DB_LOCK.wait().write().expect("error getting write-access to the db");
-      *db = new_db;
+      let mut guard = DB_LOCK.wait().write().expect("error getting write-access to the db");
+      *guard = Some(new_db);
+      true
     }
     Err(err) => {
-      error!("Error reloading database: {:?}", err)
+      error!("Error reloading database: {:?}", err);
+      false
     }
   }
 }
 
 #[get("/metadata")]
 async fn metadata() -> Result<HttpResponse, actix_web::error::Error> {
-  let db = DB_LOCK.wait().read().expect("error getting db");
+  let guard = DB_LOCK.wait().read().expect("error getting db");
+  let db = match guard.as_ref() {
+    Some(db) => db,
+    None => {
+      return Ok(HttpResponse::ServiceUnavailable().insert_header(("retry-after", INITIAL_CHECK_INTERVAL.as_secs())).finish());
+    }
+  };
   let metadata = db.reader.metadata();
   debug!("{:?}", metadata);
 
@@ -72,7 +81,13 @@ async fn lookup(addr: web::Path<IpAddr>) -> Result<HttpResponse, actix_web::erro
   let addr = addr.into_inner();
   debug!("addr: {}", addr);
 
-  let db = DB_LOCK.wait().read().expect("error getting db");
+  let guard = DB_LOCK.wait().read().expect("error getting db");
+  let db = match guard.as_ref() {
+    Some(db) => db,
+    None => {
+      return Ok(HttpResponse::ServiceUnavailable().insert_header(("retry-after", INITIAL_CHECK_INTERVAL.as_secs())).finish());
+    }
+  };
   let result = match db.reader.lookup(addr) {
     Ok(result) => result,
     Err(err) => {
@@ -112,7 +127,13 @@ async fn batch_lookup(body: web::Json<Vec<IpAddr>>) -> Result<HttpResponse, acti
     return Ok(HttpResponse::PayloadTooLarge().body(format!("Maximum of {limit} IP addresses per request")));
   }
 
-  let db = DB_LOCK.wait().read().expect("error getting db");
+  let guard = DB_LOCK.wait().read().expect("error getting db");
+  let db = match guard.as_ref() {
+    Some(db) => db,
+    None => {
+      return Ok(HttpResponse::ServiceUnavailable().insert_header(("retry-after", INITIAL_CHECK_INTERVAL.as_secs())).finish());
+    }
+  };
   let mut results = serde_json::Map::new();
 
   for addr in addrs {
@@ -170,21 +191,46 @@ async fn main() -> std::io::Result<()> {
     {
       error!("Error downloading database: {}", err);
     }
-    // Exit with an error if there isn't a database file available on disk
-    if !database_path.is_file() {
-      if !database_url_configured {
-        error!("Please configure MAXMIND_DB_URL or place a database file at {}", database_path.display());
-      }
-      process::exit(1);
-    }
 
-    // Initialize the database
-    DB_LOCK.get_or_init(|| {
-      RwLock::new(load_database().unwrap_or_else(|err| {
-        error!("Error initializing database: {:?}", err);
+    if database_path.is_file() {
+      // Initialize the database
+      DB_LOCK.get_or_init(|| {
+        RwLock::new(
+          load_database()
+            .inspect_err(|err| {
+              error!("Error initializing database: {:?}", err);
+            })
+            .ok(),
+        )
+      });
+    } else {
+      // Uh oh, we don't have a database.. requests will start failing
+      DB_LOCK.get_or_init(|| RwLock::new(None));
+
+      if !database_url_configured {
+        // Exit with an error if there isn't a database file available on disk
+        error!("Please configure MAXMIND_DB_URL or place a database file at {}", database_path.display());
         process::exit(1);
-      }))
-    });
+      }
+
+      // Since we don't have a database, try to get the database every 30 seconds until we get a working database
+      tokio::spawn(async {
+        let mut interval = interval(INITIAL_CHECK_INTERVAL);
+        interval.tick().await;
+        loop {
+          interval.tick().await;
+          match utils::download_database().await {
+            Ok(true) => {
+              if reload_database() {
+                break;
+              }
+            }
+            Ok(false) => (),
+            Err(err) => error!("Error downloading database: {}", err),
+          }
+        }
+      });
+    }
 
     if database_url_configured {
       // Send the process a SIGHUP to download a new database
@@ -192,7 +238,9 @@ async fn main() -> std::io::Result<()> {
         let mut sighup = signal(SignalKind::hangup()).expect("error listening for SIGHUP");
         while sighup.recv().await.is_some() {
           match utils::download_database().await {
-            Ok(true) => reload_database(),
+            Ok(true) => {
+              reload_database();
+            }
             Ok(false) => (),
             Err(err) => error!("Error downloading new database: {}", err),
           }
@@ -206,7 +254,9 @@ async fn main() -> std::io::Result<()> {
         loop {
           interval.tick().await;
           match utils::download_database().await {
-            Ok(true) => reload_database(),
+            Ok(true) => {
+              reload_database();
+            }
             Ok(false) => (),
             Err(err) => error!("Error downloading new database: {}", err),
           }
