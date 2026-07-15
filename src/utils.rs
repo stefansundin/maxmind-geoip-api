@@ -85,9 +85,9 @@ pub fn old_stamp() -> bool {
   return old;
 }
 
-pub fn batch_limit() -> &'static usize {
+pub fn batch_limit() -> usize {
   static BATCH_LIMIT: OnceLock<usize> = OnceLock::new();
-  BATCH_LIMIT.get_or_init(|| env::var("BATCH_LIMIT").ok().and_then(|v| v.parse().ok()).unwrap_or(1000))
+  *BATCH_LIMIT.get_or_init(|| env::var("BATCH_LIMIT").ok().and_then(|v| v.parse().ok()).unwrap_or(1000))
 }
 
 fn save_mmdb(source_path: &Path, temp_path: &Path, destination_path: &Path) -> Result<usize, ExtractDatabaseFileError> {
