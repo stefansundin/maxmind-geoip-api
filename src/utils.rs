@@ -2,6 +2,7 @@
 
 use bytes::Buf;
 use log::{debug, error, info, warn};
+use reqwest::header;
 use std::{
   env, fs,
   path::{Path, PathBuf},
@@ -238,7 +239,7 @@ pub async fn download_database() -> Result<bool, DatabaseDownloadError> {
     && etag_path.is_file()
     && let Ok(etag) = fs::read_to_string(&etag_path)
   {
-    request = request.header("If-None-Match", etag);
+    request = request.header(header::IF_NONE_MATCH, etag);
   }
 
   let download_start_time = time::Instant::now();
@@ -258,7 +259,7 @@ pub async fn download_database() -> Result<bool, DatabaseDownloadError> {
   }
   debug!("Downloading file took {:?}.", download_duration);
 
-  let etag = response.headers().get("ETag").and_then(|v| v.to_str().ok().map(|v| v.to_string()));
+  let etag = response.headers().get(header::ETAG).and_then(|v| v.to_str().ok().map(|v| v.to_string()));
 
   let temp_path = Path::new(data_dir()).join("database.mmdb.temp");
   let temp_path2 = Path::new(data_dir()).join("database.mmdb.temp2");

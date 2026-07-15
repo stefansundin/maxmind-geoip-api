@@ -1,7 +1,7 @@
 #![allow(clippy::needless_return)]
 
 use actix_cors::Cors;
-use actix_web::{App, HttpResponse, HttpServer, get, middleware, post, web};
+use actix_web::{App, HttpResponse, HttpServer, get, http::header, middleware, post, web};
 use chrono::{TimeZone, Utc};
 use log::{debug, error, info};
 use maxminddb::MaxMindDbError;
@@ -25,6 +25,8 @@ pub mod utils;
 const VERSION: Option<&str> = option_env!("CARGO_PKG_VERSION");
 const INITIAL_CHECK_INTERVAL: Duration = Duration::from_secs(30);
 const UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
+const X_MAXMIND_NETWORK: header::HeaderName = header::HeaderName::from_static("x-maxmind-network");
+const X_MAXMIND_BUILD_EPOCH: header::HeaderName = header::HeaderName::from_static("x-maxmind-build-epoch");
 
 static DB_LOCK: OnceLock<RwLock<Option<Database>>> = OnceLock::new();
 
@@ -67,13 +69,13 @@ async fn metadata() -> Result<HttpResponse, actix_web::error::Error> {
   let db = match guard.as_ref() {
     Some(db) => db,
     None => {
-      return Ok(HttpResponse::ServiceUnavailable().insert_header(("retry-after", INITIAL_CHECK_INTERVAL.as_secs())).finish());
+      return Ok(HttpResponse::ServiceUnavailable().insert_header((header::RETRY_AFTER, INITIAL_CHECK_INTERVAL.as_secs())).finish());
     }
   };
   let metadata = db.reader.metadata();
   debug!("{:?}", metadata);
 
-  return Ok(HttpResponse::Ok().insert_header(("content-type", "application/json")).body(json!(metadata).to_string()));
+  return Ok(HttpResponse::Ok().insert_header((header::CONTENT_TYPE, "application/json")).body(json!(metadata).to_string()));
 }
 
 #[get("/{ip}")]
@@ -85,7 +87,7 @@ async fn lookup(addr: web::Path<IpAddr>) -> Result<HttpResponse, actix_web::erro
   let db = match guard.as_ref() {
     Some(db) => db,
     None => {
-      return Ok(HttpResponse::ServiceUnavailable().insert_header(("retry-after", INITIAL_CHECK_INTERVAL.as_secs())).finish());
+      return Ok(HttpResponse::ServiceUnavailable().insert_header((header::RETRY_AFTER, INITIAL_CHECK_INTERVAL.as_secs())).finish());
     }
   };
   let result = match db.reader.lookup(addr) {
@@ -107,13 +109,13 @@ async fn lookup(addr: web::Path<IpAddr>) -> Result<HttpResponse, actix_web::erro
 
   let mut response_builder = HttpResponse::Ok();
   if let Ok(network) = result.network() {
-    response_builder.insert_header(("x-maxmind-network", network.to_string()));
+    response_builder.insert_header((X_MAXMIND_NETWORK, network.to_string()));
   }
 
   return Ok(
     response_builder
-      .insert_header(("content-type", "application/json"))
-      .insert_header(("x-maxmind-build-epoch", db.reader.metadata().build_epoch))
+      .insert_header((header::CONTENT_TYPE, "application/json"))
+      .insert_header((X_MAXMIND_BUILD_EPOCH, db.reader.metadata().build_epoch))
       .body(json!(data).to_string()),
   );
 }
@@ -131,7 +133,7 @@ async fn batch_lookup(body: web::Json<Vec<IpAddr>>) -> Result<HttpResponse, acti
   let db = match guard.as_ref() {
     Some(db) => db,
     None => {
-      return Ok(HttpResponse::ServiceUnavailable().insert_header(("retry-after", INITIAL_CHECK_INTERVAL.as_secs())).finish());
+      return Ok(HttpResponse::ServiceUnavailable().insert_header((header::RETRY_AFTER, INITIAL_CHECK_INTERVAL.as_secs())).finish());
     }
   };
   let mut results = serde_json::Map::new();
@@ -156,8 +158,8 @@ async fn batch_lookup(body: web::Json<Vec<IpAddr>>) -> Result<HttpResponse, acti
 
   return Ok(
     HttpResponse::Ok()
-      .insert_header(("content-type", "application/json"))
-      .insert_header(("x-maxmind-build-epoch", db.reader.metadata().build_epoch))
+      .insert_header((header::CONTENT_TYPE, "application/json"))
+      .insert_header((X_MAXMIND_BUILD_EPOCH, db.reader.metadata().build_epoch))
       .body(serde_json::Value::Object(results).to_string()),
   );
 }
@@ -280,7 +282,10 @@ async fn main() -> std::io::Result<()> {
     let cors_allowed_origins = env::var("CORS_ALLOWED_ORIGINS");
     let mut cors = Cors::default();
     if let Ok(ref v) = cors_allowed_origins {
-      cors = cors.allowed_methods(vec!["GET", "POST"]).expose_headers(vec!["server", "x-maxmind-build-epoch"]).max_age(3600);
+      cors = cors
+        .allowed_methods(vec!["GET", "POST"])
+        .expose_headers(vec![header::SERVER, X_MAXMIND_BUILD_EPOCH, X_MAXMIND_NETWORK])
+        .max_age(3600);
       if v == "*" {
         cors = cors.allow_any_origin();
       } else {
@@ -295,7 +300,7 @@ async fn main() -> std::io::Result<()> {
       .service(batch_lookup)
       .service(lookup)
       .wrap(middleware::Condition::new(cors_allowed_origins.is_ok(), cors))
-      .wrap(middleware::DefaultHeaders::new().add(("server", format!("maxmind-geoip-api/{}", version))))
+      .wrap(middleware::DefaultHeaders::new().add((header::SERVER, format!("maxmind-geoip-api/{}", version))))
       .wrap(middleware::Logger::new(
         env::var("ACCESS_LOG_FORMAT").unwrap_or(String::from(r#"%{r}a "%r" %s %b "%{Origin}i" "%{User-Agent}i" %T"#)).as_str(),
       ))
