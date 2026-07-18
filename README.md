@@ -51,6 +51,18 @@ Returns the MaxMind database metadata.
 curl http://localhost:3000/metadata
 ```
 
+### If-None-Match and ETag
+
+Responses come with an `ETag` header with the value of the database's `build_epoch`. This value can be used in the `If-None-Match` request header to make a conditional request. If the database has not been updated then a `304 Not Modified` response is returned before the IP address is even looked up. A 200 response does not necessarily mean that the response data has changed.
+
+```shell
+curl -v http://localhost:3000/1.2.3.4
+# use the "etag" header value:
+
+curl -v -H 'If-None-Match: "1783239310"' http://localhost:3000/1.2.3.4
+< HTTP/1.1 304 Not Modified
+```
+
 
 ## Docker image
 

@@ -1,7 +1,11 @@
 #![allow(clippy::needless_return)]
 
 use actix_cors::Cors;
-use actix_web::{App, HttpResponse, HttpServer, get, http::header, middleware, post, web};
+use actix_web::{
+  App, HttpResponse, HttpServer, get,
+  http::{Method, header},
+  middleware, mime, post, web,
+};
 use chrono::{TimeZone, Utc};
 use log::{debug, error, info};
 use maxminddb::MaxMindDbError;
@@ -64,7 +68,7 @@ fn reload_database() -> bool {
 }
 
 #[get("/metadata")]
-async fn metadata() -> Result<HttpResponse, actix_web::error::Error> {
+async fn get_metadata(if_none_match: Option<web::Header<header::IfNoneMatch>>) -> Result<HttpResponse, actix_web::error::Error> {
   let guard = DB_LOCK.wait().read().expect("error getting db");
   let db = match guard.as_ref() {
     Some(db) => db,
@@ -73,13 +77,29 @@ async fn metadata() -> Result<HttpResponse, actix_web::error::Error> {
     }
   };
   let metadata = db.reader.metadata();
+  let entity_tag = header::EntityTag::new_strong(metadata.build_epoch.to_string());
+  if let Some(header) = if_none_match {
+    let is_match = match &*header {
+      header::IfNoneMatch::Items(etags) => etags.iter().any(|etag| etag.strong_eq(&entity_tag)),
+      header::IfNoneMatch::Any => true,
+    };
+    if is_match {
+      return Ok(HttpResponse::NotModified().insert_header(header::ETag(entity_tag)).finish());
+    }
+  }
+
   debug!("{:?}", metadata);
 
-  return Ok(HttpResponse::Ok().insert_header((header::CONTENT_TYPE, "application/json")).body(json!(metadata).to_string()));
+  return Ok(
+    HttpResponse::Ok()
+      .insert_header(header::ContentType(mime::APPLICATION_JSON))
+      .insert_header(header::ETag(entity_tag))
+      .body(json!(metadata).to_string()),
+  );
 }
 
 #[get("/{ip}")]
-async fn lookup(addr: web::Path<IpAddr>) -> Result<HttpResponse, actix_web::error::Error> {
+async fn lookup(addr: web::Path<IpAddr>, if_none_match: Option<web::Header<header::IfNoneMatch>>) -> Result<HttpResponse, actix_web::error::Error> {
   let addr = addr.into_inner();
   debug!("addr: {}", addr);
 
@@ -90,6 +110,19 @@ async fn lookup(addr: web::Path<IpAddr>) -> Result<HttpResponse, actix_web::erro
       return Ok(HttpResponse::ServiceUnavailable().insert_header((header::RETRY_AFTER, INITIAL_CHECK_INTERVAL.as_secs())).finish());
     }
   };
+
+  let build_epoch = db.reader.metadata().build_epoch;
+  let entity_tag = header::EntityTag::new_strong(build_epoch.to_string());
+  if let Some(header) = if_none_match {
+    let is_match = match &*header {
+      header::IfNoneMatch::Items(etags) => etags.iter().any(|etag| etag.strong_eq(&entity_tag)),
+      header::IfNoneMatch::Any => true,
+    };
+    if is_match {
+      return Ok(HttpResponse::NotModified().insert_header(header::ETag(entity_tag)).finish());
+    }
+  }
+
   let result = match db.reader.lookup(addr) {
     Ok(result) => result,
     Err(err) => {
@@ -114,20 +147,16 @@ async fn lookup(addr: web::Path<IpAddr>) -> Result<HttpResponse, actix_web::erro
 
   return Ok(
     response_builder
-      .insert_header((header::CONTENT_TYPE, "application/json"))
-      .insert_header((X_MAXMIND_BUILD_EPOCH, db.reader.metadata().build_epoch))
+      .insert_header(header::ContentType(mime::APPLICATION_JSON))
+      .insert_header(header::ETag(entity_tag))
+      .insert_header((X_MAXMIND_BUILD_EPOCH, build_epoch))
       .body(json!(data).to_string()),
   );
 }
 
 #[post("/lookup")]
-async fn batch_lookup(body: web::Json<Vec<IpAddr>>) -> Result<HttpResponse, actix_web::error::Error> {
+async fn batch_lookup(body: web::Json<Vec<IpAddr>>, if_none_match: Option<web::Header<header::IfNoneMatch>>) -> Result<HttpResponse, actix_web::error::Error> {
   let addrs = body.into_inner();
-
-  let limit = utils::batch_limit();
-  if addrs.len() > limit {
-    return Ok(HttpResponse::PayloadTooLarge().body(format!("Maximum of {limit} IP addresses per request")));
-  }
 
   let guard = DB_LOCK.wait().read().expect("error getting db");
   let db = match guard.as_ref() {
@@ -136,6 +165,24 @@ async fn batch_lookup(body: web::Json<Vec<IpAddr>>) -> Result<HttpResponse, acti
       return Ok(HttpResponse::ServiceUnavailable().insert_header((header::RETRY_AFTER, INITIAL_CHECK_INTERVAL.as_secs())).finish());
     }
   };
+
+  let build_epoch = db.reader.metadata().build_epoch;
+  let entity_tag = header::EntityTag::new_strong(build_epoch.to_string());
+  if let Some(header) = if_none_match {
+    let is_match = match &*header {
+      header::IfNoneMatch::Items(etags) => etags.iter().any(|etag| etag.strong_eq(&entity_tag)),
+      header::IfNoneMatch::Any => true,
+    };
+    if is_match {
+      return Ok(HttpResponse::NotModified().insert_header(header::ETag(entity_tag)).finish());
+    }
+  }
+
+  let limit = utils::batch_limit();
+  if addrs.len() > limit {
+    return Ok(HttpResponse::PayloadTooLarge().body(format!("Maximum of {limit} IP addresses per request")));
+  }
+
   let mut results = serde_json::Map::new();
 
   for addr in addrs {
@@ -158,7 +205,8 @@ async fn batch_lookup(body: web::Json<Vec<IpAddr>>) -> Result<HttpResponse, acti
 
   return Ok(
     HttpResponse::Ok()
-      .insert_header((header::CONTENT_TYPE, "application/json"))
+      .insert_header(header::ContentType(mime::APPLICATION_JSON))
+      .insert_header(header::ETag(entity_tag))
       .insert_header((X_MAXMIND_BUILD_EPOCH, db.reader.metadata().build_epoch))
       .body(serde_json::Value::Object(results).to_string()),
   );
@@ -283,8 +331,9 @@ async fn main() -> std::io::Result<()> {
     let mut cors = Cors::default();
     if let Ok(ref v) = cors_allowed_origins {
       cors = cors
-        .allowed_methods(vec!["GET", "POST"])
-        .expose_headers(vec![header::SERVER, X_MAXMIND_BUILD_EPOCH, X_MAXMIND_NETWORK])
+        .allowed_methods(vec![Method::GET, Method::POST])
+        .allowed_headers(vec![header::IF_NONE_MATCH])
+        .expose_headers(vec![header::SERVER, header::ETAG, X_MAXMIND_BUILD_EPOCH, X_MAXMIND_NETWORK])
         .max_age(3600);
       if v == "*" {
         cors = cors.allow_any_origin();
@@ -296,7 +345,7 @@ async fn main() -> std::io::Result<()> {
     }
 
     App::new()
-      .service(metadata)
+      .service(get_metadata)
       .service(batch_lookup)
       .service(lookup)
       .wrap(middleware::Condition::new(cors_allowed_origins.is_ok(), cors))
