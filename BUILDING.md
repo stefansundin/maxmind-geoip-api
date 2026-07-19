@@ -15,13 +15,13 @@ docker buildx create --use --name multiarch --node multiarch0
 docker buildx build --pull --push --progress plain --platform linux/arm64 -t stefansundin/maxmind-geoip-api:beta .
 
 # You probably want to change the tag name if you are not me:
-docker buildx build --pull --push --progress plain --platform linux/arm64,linux/amd64,linux/riscv64 -t stefansundin/maxmind-geoip-api:v1.2.0 .
+docker buildx build --pull --push --progress plain --platform linux/arm64,linux/amd64,linux/riscv64 -t stefansundin/maxmind-geoip-api:v1.3.0 .
 
 # If the new version is stable then update tags:
-docker buildx imagetools create -t stefansundin/maxmind-geoip-api:latest stefansundin/maxmind-geoip-api:v1.2.0
+docker buildx imagetools create -t stefansundin/maxmind-geoip-api:latest stefansundin/maxmind-geoip-api:v1.3.0
 docker buildx imagetools create -t stefansundin/maxmind-geoip-api:v1 stefansundin/maxmind-geoip-api:latest
 docker buildx imagetools create -t public.ecr.aws/stefansundin/maxmind-geoip-api:latest stefansundin/maxmind-geoip-api:latest
-docker buildx imagetools create -t public.ecr.aws/stefansundin/maxmind-geoip-api:v1.2.0 stefansundin/maxmind-geoip-api:latest
+docker buildx imagetools create -t public.ecr.aws/stefansundin/maxmind-geoip-api:v1.3.0 stefansundin/maxmind-geoip-api:latest
 docker buildx imagetools create -t public.ecr.aws/stefansundin/maxmind-geoip-api:v1 stefansundin/maxmind-geoip-api:latest
 ```
 
@@ -29,7 +29,7 @@ If the build crashes then it is most likely because Docker ran out of memory. In
 
 ## Podman
 
-Cross-compiling amd64 from arm64 seems to be crashing Docker recently. So I have built `v1.2.0` using podman.
+Cross-compiling amd64 from arm64 seems to be crashing Docker recently. So I have built `v1.2.0` and later using podman.
 
 ```shell
 # Make sure you have installed qemu-user-static and qemu-user-static-binfmt to build cross architecture.
@@ -42,7 +42,7 @@ podman manifest create docker.io/stefansundin/maxmind-geoip-api:beta
 podman build --pull --platform linux/arm64,linux/amd64,linux/riscv64 --manifest docker.io/stefansundin/maxmind-geoip-api:beta .
 podman manifest push docker.io/stefansundin/maxmind-geoip-api:beta
 
-skopeo copy --all docker://docker.io/stefansundin/maxmind-geoip-api:beta docker://docker.io/stefansundin/maxmind-geoip-api:v1.2.0
+skopeo copy --all docker://docker.io/stefansundin/maxmind-geoip-api:beta docker://docker.io/stefansundin/maxmind-geoip-api:v1.3.0
 skopeo copy --all docker://docker.io/stefansundin/maxmind-geoip-api:beta docker://docker.io/stefansundin/maxmind-geoip-api:v1
 skopeo copy --all docker://docker.io/stefansundin/maxmind-geoip-api:beta docker://docker.io/stefansundin/maxmind-geoip-api:latest
 
@@ -51,6 +51,6 @@ aws ecr-public get-login-password --region us-east-1
 podman login public.ecr.aws --username AWS
 
 skopeo copy --all docker://docker.io/stefansundin/maxmind-geoip-api:latest docker://public.ecr.aws/stefansundin/maxmind-geoip-api:latest
-skopeo copy --all docker://docker.io/stefansundin/maxmind-geoip-api:latest docker://public.ecr.aws/stefansundin/maxmind-geoip-api:v1.2.0
+skopeo copy --all docker://docker.io/stefansundin/maxmind-geoip-api:latest docker://public.ecr.aws/stefansundin/maxmind-geoip-api:v1.3.0
 skopeo copy --all docker://docker.io/stefansundin/maxmind-geoip-api:latest docker://public.ecr.aws/stefansundin/maxmind-geoip-api:v1
 ```

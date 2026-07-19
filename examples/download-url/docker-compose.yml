@@ -1,6 +1,7 @@
 services:
   geoip:
     image: stefansundin/maxmind-geoip-api
+    build: ../..
     ports:
       - 3000:80
     environment:
